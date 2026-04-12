@@ -18,14 +18,26 @@ pi -e npm:pi-venice-stats
 
 ## Default view
 
+Two-column layout — protocol data on the left, system/balance/wallet on the right rail (40 chars):
+
 ```
-VVV $7.9238  +5.2% 24h  ·  DIEM $1030.95  +9.1% 24h  ·  ETH $2214.67      EDT 22:07:31  ·  next epoch 21h 52m 28s
-MCap $364.9M  ·  Staked 67.8% @ 18.2% APR  ·  Locked 25.9%                  $0.14 USD  ·  DIEM Balance 0.00 / 4.96 used
-0x4486…80bc  Patrician Octopus 🐙  ·  Portfolio $26.2K  ·  Rank #466/14.4k
-⎿ sVVV 3,302  ·  DIEM staked 4.96  ·  Pending 0.20 VVV
+ PRICES ──────────────────────────────────── │ SYSTEM ─────────────────────────────
+ VVV $8.05 ▆█▅▃▂▃▃▁▂▂▃▃ ↓4.6% 24h           │ EDT 22:07:31  ·  next epoch 21h 52m
+ MCap $368.6M Ranked #117  ·  DIEM …          │ BALANCE ────────────────────────────
+ STAKING ─────────────────────────────────── │ $0.14 USD  ·  DIEM 0.00 / 4.96 used
+ 67.8% @ 18.2% APR  ·  +95 stakers 7d  …     │ WALLET ─────────────────────────────
+ DIEM ────────────────────────────────────── │ 0x4486…80bc  Patrician Octopus 🐙
+ Supply 10.5M  ·  Mint 1 sVVV  ·  …  78% ██░ │ Portfolio $26.2K  ·  Rank #466/14.4k
+ 24H MARKET ──────────────────────────────── │ sVVV 3,302  ·  Pending 0.20 VVV
+ Vol $6.42M (+28.6%)  Traders 2,007 (+95%)    │ ▁▂▂▂▁▁▂▂▂▂▂▄▃▄▃▃▅▆▆█ $33.2K ↑78% 7d
+ Buy/Sell 47/53%  Net Flow +286k  Top: …      │
 ```
 
-VVV and DIEM prices flash **green** on uptick and **red** on downtick.
+- VVV and DIEM prices flash **green** on uptick and **red** on downtick
+- 24h sparklines rendered with unicode block elements (`▁▂▃▄▅▆▇█`)
+- MCap CoinGecko ranks shown next to market cap values
+- 7-day wallet exposure sparkline with USD total and change %
+- Width-adaptive: gracefully degrades on narrow terminals (< 80 cols stacks vertically)
 
 ## Clock overlay
 
@@ -80,7 +92,7 @@ Or set from inside the TUI (persisted across sessions):
 
 ## Dashboard panels
 
-Most panels are a single row; the wallet panel spans two rows.
+The layout is organized into left-column sections and a right rail. Panels can be toggled individually.
 
 **List all panels:**
 ```text
@@ -94,22 +106,18 @@ Most panels are a single row; the wallet panel spans two rows.
 /venice-stats-panel remove <id>
 /venice-stats-panel move <id> up
 /venice-stats-panel move <id> down
-/venice-stats-panel reset        ← restore defaults: prices, protocol, wallet
+/venice-stats-panel reset        ← restore defaults: prices, staking, diem, markets, wallet
 ```
 
 **Available panels:**
 
 | id | Label | What it shows | Data source |
 |----|-------|---------------|-------------|
-| `prices` | Prices | VVV + DIEM + ETH spot prices with 24h % change. Prices flash on tick. | `/api/metrics` every 5s |
-| `protocol` | Protocol | Market cap, staking ratio, APR, sVVV lock ratio | `/api/metrics` every 5s |
-| `wallet` | Wallet | Row 1: identity (name, role, tier emoji), portfolio USD, rank. Row 2: sVVV, DIEM staked, pending rewards | `/api/venetians` every 60s |
-| `diem` | DIEM | DIEM supply, mint rate (sVVV), remaining mintable supply, stake ratio | `/api/metrics` every 5s |
-| `social` | Social | Erik Voorhees followers, CoinGecko sentiment %, VVV + DIEM market cap ranks | `/api/social` every 5m |
-| `burns` | Burns | Total VVV burned, organic burn volume, annual deflation rate | `/api/metrics` every 5s |
-| `staking` | Staking | New stakers (7d), 7-day staking growth, VVV in cooldown | `/api/metrics` every 5s |
-| `markets` | Markets | VVV DEX 24h volume, buy %, unique trader count | `/api/markets` every 30s |
-| `revenue` | Revenue | Venice protocol revenue to date, annualized burn revenue, emission rate | `/api/metrics` every 5s |
+| `prices` | Prices | VVV + DIEM + ETH prices with sparklines, 24h % change, MCap with CoinGecko rank | `/api/metrics`, `/api/charts`, `/api/social` |
+| `staking` | Staking | Staking ratio, APR, new stakers (7d), growth %, cooldown count | `/api/metrics` |
+| `diem` | DIEM | Supply, mint rate, remaining mintable, staked gauge (all on one line) | `/api/metrics` |
+| `markets` | 24H Market | Volume (+%), traders (+%), swaps (+%), buy/sell ratio, net flow, top pool | `/api/markets` |
+| `wallet` | Wallet | Identity, portfolio USD, rank, sVVV, pending rewards, 7d exposure sparkline | `/api/venetians`, `/api/wallet-history` |
 
 **Dynamic rate allocation** — targets a configurable budget (default **30 req/min**, range **1–59**), shared automatically across active data sources.
 
@@ -157,6 +165,10 @@ How has the staking ratio trended over 90 days?
 ```
 
 The `mcp` proxy tool handles discovery and routing — no extra setup needed.
+
+## API endpoint reference
+
+Detailed documentation for all 17+ venicestats.com API endpoints (field names, params, response shapes) is in [`src/VENICE_STATS_ENDPOINTS.md`](src/VENICE_STATS_ENDPOINTS.md).
 
 ## License
 
