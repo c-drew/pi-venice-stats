@@ -300,13 +300,14 @@ export function renderClock(
     row1Parts.push(theme.fg("dim", "next epoch ") + theme.fg("accent", epochStr));
   }
 
-  // Adaptive precision: more decimal places for smaller values
-  const fmtDiem = (n: number): string => {
-    if (n < 1)   return n.toFixed(6);
-    if (n < 10)  return n.toFixed(4);
-    if (n < 100) return n.toFixed(2);
-    return n.toFixed(1);
-  };
+  // Precision is set by epoch allocation size, with a finer-grained trigger
+  // when remaining balance drops below 1 DIEM regardless of allocation.
+  const diemRemaining = billing.diemBalance ?? 0;
+  const diemDecimals =
+    billing.diemEpochAllocation < 1  || diemRemaining < 1  ? 6 :
+    billing.diemEpochAllocation < 10 || diemRemaining < 10 ? 4 :
+    2;
+  const fmtDiem = (n: number): string => n.toFixed(diemDecimals);
   const fmtUsd = (n: number): string => n < 1 ? n.toFixed(4) : n.toFixed(2);
 
   // Row 2: $X.XX USD  ·  DIEM Balance X / Y used

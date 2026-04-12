@@ -34,6 +34,18 @@ Always right-aligned. When `VENICE_ADMIN_API_KEY` is set, billing info appears o
 - **Row 1** — `TZAbbrev HH:MM:SS  ·  next epoch Xh YYm ZZs`
 - **Row 2** — `$X.XX USD  ·  DIEM Balance X / Y used` (USD omitted when < $0.01; DIEM turns **red** below 10% remaining)
 
+DIEM precision scales dynamically based on your epoch allocation and remaining balance — so small allocations and low balances always show meaningful digits:
+
+| Allocation | Remaining | Decimal places |
+|---|---|---|
+| ≥ 10 DIEM | ≥ 10 DIEM | 2 — `0.44 / 100.00 used` |
+| ≥ 10 DIEM | < 10 DIEM | 4 — `91.2345 / 100.0000 used` |
+| < 10 DIEM | any | 4 — `0.4375 / 4.9615 used` |
+| any | < 1 DIEM | 6 — `4.960500 / 4.961500 used` |
+| < 1 DIEM | any | 6 |
+
+USD shows 4 decimal places when below $1 (`$0.1426 USD`).
+
 ```bash
 export VENICE_ADMIN_API_KEY="your-venice-admin-key"
 ```
