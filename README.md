@@ -111,6 +111,41 @@ Most panels are a single row; the wallet panel spans two rows.
 
 > **Multi-session warning** — only the first `pi` session to start renders the widget. Others display an info notice and make no requests. If the owning session exited without releasing the lock, run `/venice-stats-widget claim` to take over.
 
+## MCP integration
+
+Pair this with the [`@venicestats/mcp-server`](https://www.npmjs.com/package/@venicestats/mcp-server) to give the Pi agent 18+ callable tools for deep protocol analytics — price history, staking, wallet intelligence, insider flow, tokenomics, and more.
+
+**1. Install the MCP adapter:**
+
+```bash
+pi install npm:pi-mcp-adapter
+```
+
+**2. Add the venicestats server to `~/.pi/agent/mcp.json`:**
+
+```json
+{
+  "mcpServers": {
+    "venicestats": {
+      "command": "npx",
+      "args": ["-y", "@venicestats/mcp-server@latest"],
+      "lifecycle": "eager"
+    }
+  }
+}
+```
+
+Restart Pi. The agent can now answer questions like:
+
+```
+What's the current VVV price?
+Who are the top 10 stakers?
+Show me insider trading activity this week.
+How has the staking ratio trended over 90 days?
+```
+
+The `mcp` proxy tool handles discovery and routing — no extra setup needed.
+
 ## License
 
 Apache-2.0
