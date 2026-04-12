@@ -265,6 +265,7 @@ export function startPriceWidget(
             organicBurned: d.organicBurned ?? 0, burnDeflationRate: d.burnDeflationRate ?? 0,
             emissionRate: d.emissionRate ?? 0,
             netFlow7d: d.netFlow7d ?? 0,
+            fdv: d.fdv ?? 0, diemFdv: d.diemFdv ?? 0,
           };
           plog(`metrics ok — VVV=$${d.vvvPrice?.toFixed(4)} DIEM=$${d.diemPrice?.toFixed(2)}`);
           logPanels();
@@ -551,8 +552,10 @@ export function startPriceWidget(
 
             const vvvRank  = social?.marketCapRank     ? dim(" \u00B7 Ranked #") + theme.fg("text", String(social.marketCapRank))     : "";
             const diemRank = social?.diemMarketCapRank ? dim(" \u00B7 Ranked #") + theme.fg("text", String(social.diemMarketCapRank)) : "";
-            const vvvM = dim("MCap ") + theme.fg("text", fmtUSD(metrics.marketCap)) + vvvRank;
-            const diemM = dim("MCap ") + theme.fg("text", fmtUSD(diemMCap)) + diemRank;
+            const vvvFdv  = metrics.fdv     ? dim(" \u00B7 FDV ") + theme.fg("text", fmtUSD(metrics.fdv))     : "";
+            const diemFdv = metrics.diemFdv ? dim(" \u00B7 FDV ") + theme.fg("text", fmtUSD(metrics.diemFdv)) : "";
+            const vvvM = dim("MCap ") + theme.fg("text", fmtUSD(metrics.marketCap)) + vvvRank + vvvFdv;
+            const diemM = dim("MCap ") + theme.fg("text", fmtUSD(diemMCap)) + diemRank + diemFdv;
 
             const vvvBlockW = Math.max(visibleWidth(vvvP), visibleWidth(vvvM));
             priceL1 = fitLine(vvvP, vvvBlockW) + gap + diemP;
@@ -613,7 +616,7 @@ export function startPriceWidget(
           if (panels.includes("markets") && markets) {
             const chg = (v: number | null): string => {
               if (v == null) return "";
-              return theme.fg(v >= 0 ? "success" : "error", ` (${fmtPct(v)})`);
+              return theme.fg(v >= 0 ? "success" : "error", ` ${arrow(v)}`);
             };
 
             const vol = dim("Vol ") + theme.fg("text", fmtUSD(markets.volume)) + chg(markets.volumeChange);

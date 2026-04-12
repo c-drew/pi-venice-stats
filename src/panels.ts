@@ -42,6 +42,8 @@ export interface MetricsData {
   burnDeflationRate: number;
   emissionRate: number;
   netFlow7d: number;
+  fdv: number;
+  diemFdv: number;
 }
 
 export interface WalletData {
