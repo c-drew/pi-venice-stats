@@ -378,25 +378,24 @@ export function startPriceWidget(
             }
           }
 
-          const clockStr   = renderClock(theme, getTimezone(), getTimeFormat(), billing);
-          const clockWidth = visibleWidth(clockStr);
+          const [clockRow1, clockRow2] = renderClock(theme, getTimezone(), getTimeFormat(), billing);
           const minPadding = 2;
 
-          if (rows.length > 0) {
-            const firstRow      = rows[0];
-            const firstRowWidth = visibleWidth(firstRow);
-            const totalNeeded   = firstRowWidth + minPadding + clockWidth;
-            if (totalNeeded <= width) {
-              rows[0] = firstRow + " ".repeat(width - firstRowWidth - clockWidth) + clockStr;
-            } else {
-              const availForFirst = width - minPadding - clockWidth;
-              if (availForFirst > 10) {
-                rows[0] = truncateToWidth(firstRow, availForFirst, "") + " ".repeat(minPadding) + clockStr;
-              }
+          function overlayRight(panelRow: string | undefined, clockRow: string): string {
+            const cw = visibleWidth(clockRow);
+            if (!panelRow) return cw < width ? " ".repeat(width - cw) + clockRow : clockRow;
+            const pw = visibleWidth(panelRow);
+            if (pw + minPadding + cw <= width) {
+              return panelRow + " ".repeat(width - pw - cw) + clockRow;
             }
-          } else {
-            rows.push(clockWidth < width ? " ".repeat(width - clockWidth) + clockStr : clockStr);
+            const avail = width - minPadding - cw;
+            return avail > 10
+              ? truncateToWidth(panelRow, avail, "") + " ".repeat(minPadding) + clockRow
+              : panelRow;
           }
+
+          rows[0] = overlayRight(rows[0], clockRow1);
+          if (clockRow2) rows[1] = overlayRight(rows[1], clockRow2);
 
           return rows;
         },
