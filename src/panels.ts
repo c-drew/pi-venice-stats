@@ -397,7 +397,7 @@ export const PANEL_REGISTRY: Record<string, PanelDef> = {
         theme.fg("dim", "Rank #")  + theme.fg("text", String(wallet.rank)) +
         theme.fg("dim", `/${fmtK(wallet.totalVenetians)}`);
       const line2 =
-        theme.fg("dim", " - ") +
+        theme.fg("dim", " ⎿ ") +
         theme.fg("dim", "sVVV ")         + theme.fg("text", fmtNum4(wallet.svvvBalance)) +
         sep +
         theme.fg("dim", "DIEM staked ")  + theme.fg("text", wallet.diemStaked.toFixed(2)) +
