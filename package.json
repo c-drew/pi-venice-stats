@@ -1,6 +1,6 @@
 {
   "name": "pi-venice-stats",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Live Venice Protocol stats dashboard for Pi Coding Agent",
   "license": "Apache-2.0",
   "type": "module",
