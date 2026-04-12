@@ -395,7 +395,7 @@ export function renderClock(
     diem =
       theme.fg("dim", "DIEM ") +
       theme.fg(diemColor, fmtDiemVal(usedDiem)) +
-      theme.fg("dim", " / ") +
+      theme.fg("dim", "/") +
       theme.fg("text", fmtDiemVal(billing.diemEpochAllocation)) +
       theme.fg("dim", " used");
   }

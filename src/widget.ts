@@ -491,27 +491,46 @@ export function startPriceWidget(
           const isNarrow = width < 80;
           const isWide = width >= 120;
           const hasRail = !isNarrow;
-          const leftW = hasRail ? width - RAIL_W - 1 : width;
-          const B = theme.fg("dim", "\u2502");
-          const SEP_L = theme.fg("dim", "\u2500".repeat(leftW));
-          const SEP_R = theme.fg("dim", "\u2500".repeat(RAIL_W));
+          // 3 border chars: left │, middle │, right │
+          const leftW = hasRail ? width - RAIL_W - 3 : width;
           const clock = renderClock(theme, getTimezone(), getTimeFormat(), billing);
           const hasBilling = clock.usd !== "" || clock.diem !== "";
           const spc = "   ";
 
-          // ══════════════════════════════════════════════════════════════════
-          // LEFT COLUMN — protocol + market intelligence
-          // ══════════════════════════════════════════════════════════════════
-          const leftLines: string[] = [];
+          // Box-drawing characters
+          const H = "\u2500", V = "\u2502";
+          const dim = (s: string) => theme.fg("dim", s);
+          const hdr = (s: string) => theme.fg("syntaxKeyword", s);
 
-          // ── PRICES ──
+          const hLineL = H.repeat(leftW);
+          const hLineR = H.repeat(RAIL_W);
+          const borderTop    = dim("\u250C" + hLineL + "\u252C" + hLineR + "\u2510");
+          const borderBot    = dim("\u2514" + hLineL + "\u2534" + hLineR + "\u2518");
+          const divBoth      = dim("\u251C" + hLineL + "\u253C" + hLineR + "\u2524");
+          const divLeftOnly  = dim("\u251C" + hLineL + "\u2524");
+          const bL = dim(V);  // left/right border
+          const bM = dim(V);  // middle border
+
+          function contentRow(left: string, right: string): string {
+            return bL + fitLine(left, leftW) + bM + fitLine(right, RAIL_W) + bL;
+          }
+          function divLeftRow(right: string): string {
+            return divLeftOnly + fitLine(right, RAIL_W) + bL;
+          }
+
+          // ══════════════════════════════════════════════════════════════════
+          // LEFT COLUMN content — protocol + market intelligence
+          // ══════════════════════════════════════════════════════════════════
+
+          // ── PRICES (2 lines) ──
+          let priceL1 = "", priceL2 = "";
           if (metrics) {
             const vvvColor  = vvvFlash  === "up" ? "success" : vvvFlash  === "down" ? "error" : "text";
             const diemColor = diemFlash === "up" ? "success" : diemFlash === "down" ? "error" : "text";
             const vvvChg    = metrics.priceChange24h     >= 0 ? "success" : "error";
             const diemChg   = metrics.diemPriceChange24h >= 0 ? "success" : "error";
 
-            const sparkW = isWide ? 12 : isNarrow ? 6 : 8;
+            const sparkW = isWide ? 12 : 8;
             const vvvSpark  = charts?.vvvPrices.length
               ? theme.fg(vvvChg, sparkline(charts.vvvPrices, sparkW)) : "";
             const diemSpark = charts?.diemPrices.length
@@ -519,42 +538,41 @@ export function startPriceWidget(
             const diemMCap = metrics.diemPrice * metrics.diemSupply;
             const gap = isWide ? "      " : "    ";
 
-            const vvvP = theme.fg("dim", "VVV ") +
+            const vvvP = hdr("VVV ") +
               theme.fg(vvvColor, `$${metrics.vvvPrice.toFixed(4)}`) +
               (vvvSpark ? " " + vvvSpark : "") +
               theme.fg(vvvChg, ` ${arrow(metrics.priceChange24h)}`) +
-              theme.fg("dim", " 24h");
-            const diemP = theme.fg("dim", "DIEM ") +
+              dim(" 24h");
+            const diemP = hdr("DIEM ") +
               theme.fg(diemColor, `$${metrics.diemPrice.toFixed(2)}`) +
               (diemSpark ? " " + diemSpark : "") +
               theme.fg(diemChg, ` ${arrow(metrics.diemPriceChange24h)}`) +
-              theme.fg("dim", " 24h");
+              dim(" 24h");
 
-            const vvvRank  = social?.marketCapRank     ? theme.fg("dim", " Ranked #") + theme.fg("text", String(social.marketCapRank))     : "";
-            const diemRank = social?.diemMarketCapRank ? theme.fg("dim", " Ranked #") + theme.fg("text", String(social.diemMarketCapRank)) : "";
-            const vvvM = theme.fg("dim", "MCap ") + theme.fg("text", fmtUSD(metrics.marketCap)) + vvvRank;
-            const diemM = theme.fg("dim", "MCap ") + theme.fg("text", fmtUSD(diemMCap)) + diemRank;
+            const vvvRank  = social?.marketCapRank     ? dim(" \u00B7 Ranked #") + theme.fg("text", String(social.marketCapRank))     : "";
+            const diemRank = social?.diemMarketCapRank ? dim(" \u00B7 Ranked #") + theme.fg("text", String(social.diemMarketCapRank)) : "";
+            const vvvM = dim("MCap ") + theme.fg("text", fmtUSD(metrics.marketCap)) + vvvRank;
+            const diemM = dim("MCap ") + theme.fg("text", fmtUSD(diemMCap)) + diemRank;
 
             const vvvBlockW = Math.max(visibleWidth(vvvP), visibleWidth(vvvM));
-            leftLines.push(fitLine(vvvP, vvvBlockW) + gap + diemP);
-            leftLines.push(fitLine(vvvM, vvvBlockW) + gap + diemM);
+            priceL1 = fitLine(vvvP, vvvBlockW) + gap + diemP;
+            priceL2 = fitLine(vvvM, vvvBlockW) + gap + diemM;
           } else {
-            leftLines.push(theme.fg("dim", "Loading\u2026"));
+            priceL1 = dim("Loading\u2026");
           }
 
-          // ── STAKING ──
+          // ── STAKING (header + 1 data line) ──
+          let stakingHeader = hdr("VVV STAKING");
+          let stakingData = "";
           const hasStaking = panels.includes("staking") || panels.includes("protocol");
           if (hasStaking && metrics) {
-            leftLines.push(SEP_L);
-            leftLines.push(theme.fg("dim", "STAKING"));
-
             const gw = gaugeWidth(leftW);
             const staked =
-              theme.fg("dim", "Staked ") + gauge(metrics.stakingRatio / 100, gw, theme) +
+              dim("Staked ") + gauge(metrics.stakingRatio / 100, gw, theme) +
               theme.fg("text", ` ${metrics.stakingRatio.toFixed(1)}%`) +
-              theme.fg("dim", " @ ") + theme.fg("text", `${metrics.stakerApr.toFixed(1)}% APR`);
+              dim(" @ ") + theme.fg("text", `${metrics.stakerApr.toFixed(1)}% APR`);
             const locked =
-              theme.fg("dim", "Locked ") + gauge(metrics.lockRatio / 100, gw, theme, "syntaxType") +
+              dim("Locked ") + gauge(metrics.lockRatio / 100, gw, theme, "syntaxType") +
               theme.fg("text", ` ${metrics.lockRatio.toFixed(1)}%`);
 
             const wave = charts?.cooldownWave ?? [];
@@ -564,161 +582,177 @@ export function startPriceWidget(
             const coolSparkW = isWide ? 11 : 7;
             const coolSpark = wave.length ? theme.fg(waveDir, sparkline(wave, coolSparkW)) + " " : "";
             const coolFull =
-              theme.fg("dim", "Cooldown ") + coolSpark +
+              dim("Cooldown ") + coolSpark +
               theme.fg("text", fmtK(metrics.cooldownVvv)) +
-              (wave.length >= 2 ? theme.fg(waveDir, ` ${arrow(waveChg)}`) + theme.fg("dim", " 7d") : "");
+              (wave.length >= 2 ? theme.fg(waveDir, ` ${arrow(waveChg)}`) + dim(" 7d") : "");
             const coolShort =
-              theme.fg("dim", "Cooldown ") + coolSpark + theme.fg("text", fmtK(metrics.cooldownVvv));
+              dim("Cooldown ") + coolSpark + theme.fg("text", fmtK(metrics.cooldownVvv));
 
-            let stakingLine = staked + spc + locked + spc + coolFull;
-            if (visibleWidth(stakingLine) > leftW) stakingLine = staked + spc + locked + spc + coolShort;
-            if (visibleWidth(stakingLine) > leftW) stakingLine = staked + spc + locked;
-            if (visibleWidth(stakingLine) > leftW) stakingLine = staked;
-
-            leftLines.push(stakingLine);
+            stakingData = staked + spc + locked + spc + coolFull;
+            if (visibleWidth(stakingData) > leftW) stakingData = staked + spc + locked + spc + coolShort;
+            if (visibleWidth(stakingData) > leftW) stakingData = staked + spc + locked;
+            if (visibleWidth(stakingData) > leftW) stakingData = staked;
           }
 
-          // ── DIEM ──
+          // ── DIEM (header + 1 data line) ──
+          let diemHeader = hdr("DIEM ANALYTICS");
+          let diemData = "";
           if (panels.includes("diem") && metrics) {
-            leftLines.push(SEP_L);
-            leftLines.push(theme.fg("dim", "DIEM"));
-
             const gw = gaugeWidth(leftW, 0.05);
-            const diemLine =
-              theme.fg("dim", "DIEM Supply ") + theme.fg("text", fmtK(metrics.diemSupply)) + spc +
-              theme.fg("dim", "Mint Rate ") + theme.fg("text", `${metrics.mintRate.toFixed(2)} sVVV`) + spc +
-              theme.fg("dim", "Remaining Mintable ") + theme.fg("text", fmtK(metrics.remainingMintable)) + spc +
-              theme.fg("dim", "Staked ") + gauge(metrics.diemStakeRatio, gw, theme) +
+            diemData =
+              dim("DIEM Supply ") + theme.fg("text", fmtK(metrics.diemSupply)) + spc +
+              dim("Mint Rate ") + theme.fg("text", `${metrics.mintRate.toFixed(0)} sVVV`) + spc +
+              dim("Remaining Mintable ") + theme.fg("text", fmtK(metrics.remainingMintable)) + spc +
+              dim("Staked ") + gauge(metrics.diemStakeRatio, gw, theme) +
               theme.fg("text", ` ${(metrics.diemStakeRatio * 100).toFixed(1)}%`);
-            leftLines.push(diemLine);
           }
 
-          // ── 24H MARKET ──
+          // ── 24H MARKET (header + 2 data lines) ──
+          let mktHeader = hdr("24H MARKET");
+          let mktLine1 = "", mktLine2 = "";
           if (panels.includes("markets") && markets) {
-            leftLines.push(SEP_L);
-            leftLines.push(theme.fg("dim", "24H MARKET"));
-
             const chg = (v: number | null): string => {
               if (v == null) return "";
               return theme.fg(v >= 0 ? "success" : "error", ` (${fmtPct(v)})`);
             };
 
-            const vol = theme.fg("dim", "Vol ") + theme.fg("text", fmtUSD(markets.volume)) + chg(markets.volumeChange);
-            const traders = theme.fg("dim", "Traders ") + theme.fg("text", fmtNum4(markets.traders)) + chg(markets.traderGrowth);
+            const vol = dim("Vol ") + theme.fg("text", fmtUSD(markets.volume)) + chg(markets.volumeChange);
+            const traders = dim("Traders ") + theme.fg("text", fmtNum4(markets.traders)) + chg(markets.traderGrowth);
             const swaps = markets.swaps != null
-              ? theme.fg("dim", "Swaps ") + theme.fg("text", fmtK(markets.swaps)) + chg(markets.swapGrowth) : "";
+              ? dim("Swaps ") + theme.fg("text", fmtK(markets.swaps)) + chg(markets.swapGrowth) : "";
 
-            let mktLine1 = vol + spc + traders;
+            mktLine1 = vol + spc + traders;
             if (swaps && visibleWidth(mktLine1 + spc + swaps) <= leftW) mktLine1 += spc + swaps;
-            leftLines.push(mktLine1);
 
             const sellPct = 100 - markets.buyPct;
             const buyColor = markets.buyPct >= 50 ? "success" : "error";
-            const buySell = theme.fg("dim", "Buy/Sell ") + theme.fg(buyColor, `${markets.buyPct}/${sellPct}%`);
+            const buySell = dim("Buy/Sell ") + theme.fg(buyColor, `${markets.buyPct}/${sellPct}%`);
             const netFlow = metrics?.netFlow7d != null
-              ? theme.fg("dim", "Net Flow ") +
+              ? dim("Net Flow ") +
                 theme.fg(metrics.netFlow7d >= 0 ? "success" : "error", `${fmtVVV(metrics.netFlow7d)} VVV`) +
-                theme.fg("dim", " (7d)")
+                dim(" (7d)")
               : "";
             const pool = markets.topPoolName != null
-              ? theme.fg("dim", "Top: ") + theme.fg("text", markets.topPoolName) +
-                (markets.topPoolShare != null ? theme.fg("dim", ` (${markets.topPoolShare}%)`) : "")
+              ? dim("Top: ") + theme.fg("text", markets.topPoolName) +
+                (markets.topPoolShare != null ? dim(` (${markets.topPoolShare}%)`) : "")
               : "";
 
-            let mktLine2 = buySell;
+            mktLine2 = buySell;
             if (netFlow) mktLine2 += spc + netFlow;
             if (pool && visibleWidth(mktLine2 + spc + pool) <= leftW) mktLine2 += spc + pool;
-            leftLines.push(mktLine2);
           }
 
           // ══════════════════════════════════════════════════════════════════
-          // RIGHT RAIL — system, balance, wallet
+          // RIGHT RAIL content — system, balance, wallet + exposure
           // ══════════════════════════════════════════════════════════════════
-          const railLines: string[] = [];
-          if (hasRail) {
-            // SYSTEM
-            railLines.push(theme.fg("dim", "SYSTEM"));
-            railLines.push(clock.time);
-            if (clock.epoch) railLines.push(clock.epoch);
 
-            // BALANCE
-            if (hasBilling) {
-              railLines.push(SEP_R);
-              railLines.push(theme.fg("dim", "BALANCE"));
-              if (clock.usd) railLines.push(clock.usd);
-              if (clock.diem) railLines.push(clock.diem);
-            }
+          // ── SYSTEM (header + time·epoch on one line) ──
+          const systemHeader = hdr("SYSTEM");
+          const systemLine = clock.epoch
+            ? clock.time + dim(" \u00B7 ") + clock.epoch
+            : clock.time;
 
-            // WALLET
-            if (panels.includes("wallet")) {
-              railLines.push(SEP_R);
-              railLines.push(theme.fg("dim", "WALLET"));
-              const addr = getWallet();
-              if (wallet && metrics) {
-                const roleColor = ROLE_COLOR[wallet.role] ?? "dim";
-                const emoji = SIZE_EMOJI[wallet.sizeLabel] ?? "";
-                railLines.push(
-                  theme.fg("accent", wallet.label) +
-                  (wallet.role ? (theme as any).fg(roleColor, ` ${wallet.role}`) : "") +
-                  (wallet.sizeLabel ? theme.fg("dim", ` ${wallet.sizeLabel}`) : "") +
-                  (emoji ? " " + emoji : ""),
-                );
-                railLines.push(
-                  theme.fg("dim", "Portfolio ") + theme.fg("text", fmtUSD(wallet.svvvBalance * metrics.vvvPrice)) +
-                  "  " + theme.fg("dim", "Rank #") + theme.fg("text", String(wallet.rank)) +
-                  theme.fg("dim", `/${fmtK(wallet.totalVenetians)}`),
-                );
-                railLines.push(
-                  theme.fg("dim", "\u23BF sVVV ") + theme.fg("text", fmtNum4(wallet.svvvBalance)) +
-                  spc + theme.fg("dim", "Pending ") + theme.fg("success", `${wallet.pendingRewards.toFixed(2)} VVV`),
-                );
-                // 7d exposure sparkline
-                if (walletExposure) {
-                  const expDir = walletExposure.changePct >= 0 ? "success" : "error";
-                  railLines.push(
-                    theme.fg(expDir, walletExposure.sparkline) + " " +
-                    theme.fg("text", fmtUSD(walletExposure.currentExposure)) +
-                    theme.fg(expDir, ` ${arrow(walletExposure.changePct)}`) +
-                    theme.fg("dim", " 7d"),
-                  );
-                }
-              } else if (addr) {
-                railLines.push(theme.fg("dim", `Loading ${fmtAddr(addr)}\u2026`));
-              } else {
-                railLines.push(theme.fg("dim", "/venice-wallet <0x\u2026>"));
+          // ── BALANCE (header + single combined line) ──
+          const balanceHeader = hdr("BALANCE");
+          let balanceLine = "";
+          if (hasBilling) {
+            const parts: string[] = [];
+            if (clock.usd) parts.push(clock.usd);
+            if (clock.diem) parts.push(clock.diem);
+            balanceLine = parts.join(dim(" \u00B7 "));
+          }
+
+          // ── WALLET + PROTOCOL EXPOSURE (continuous block, up to 6 lines) ──
+          const walletHeader = hdr("WALLET");
+          let walletAddrLine = "";
+          let walletPortLine = "";
+          let walletSvvvLine = "";
+          const expHeader = hdr("PROTOCOL EXPOSURE");
+          let expLine = "";
+
+          if (panels.includes("wallet")) {
+            const addr = getWallet();
+            if (wallet && metrics) {
+              const emoji = SIZE_EMOJI[wallet.sizeLabel] ?? "";
+              const roleColor = ROLE_COLOR[wallet.role] ?? "dim";
+              const venetianName =
+                (wallet.role ? (theme as any).fg(roleColor, wallet.role) : "") +
+                (wallet.sizeLabel ? " " + theme.fg("accent", wallet.sizeLabel) : "");
+              walletAddrLine =
+                (theme as any).fg(roleColor, fmtAddr(addr ?? "")) +
+                (venetianName ? " " + venetianName : "") +
+                (emoji ? " " + emoji : "");
+              walletPortLine =
+                dim("Portfolio ") + theme.fg("text", fmtUSD(wallet.svvvBalance * metrics.vvvPrice)) +
+                "   " + dim("Rank #") + theme.fg("text", String(wallet.rank)) +
+                dim(`/${fmtK(wallet.totalVenetians)}`);
+              walletSvvvLine =
+                dim("\u23BF sVVV ") + theme.fg("text", fmtNum4(wallet.svvvBalance)) +
+                spc + dim("Pending ") + theme.fg("success", `${wallet.pendingRewards.toFixed(2)} VVV`);
+              if (walletExposure) {
+                const expDir = walletExposure.changePct >= 0 ? "success" : "error";
+                expLine =
+                  theme.fg(expDir, walletExposure.sparkline) + "  " +
+                  theme.fg("text", fmtUSD(walletExposure.currentExposure)) +
+                  theme.fg(expDir, ` ${arrow(walletExposure.changePct)}`) +
+                  dim(" 7d");
               }
+            } else if (addr) {
+              walletAddrLine = dim(`Loading ${fmtAddr(addr)}\u2026`);
+            } else {
+              walletAddrLine = dim("/venice-wallet <0x\u2026>");
             }
           }
 
           // ══════════════════════════════════════════════════════════════════
-          // MERGE COLUMNS
+          // ASSEMBLE GRID
           // ══════════════════════════════════════════════════════════════════
           const outRows: string[] = [];
           if (hasRail) {
-            const totalRows = Math.max(leftLines.length, railLines.length);
-            for (let i = 0; i < totalRows; i++) {
-              outRows.push(fitLine(leftLines[i] ?? "", leftW) + B + fitLine(railLines[i] ?? "", RAIL_W));
-            }
+            outRows.push(borderTop);
+            // PRICES / SYSTEM
+            outRows.push(contentRow(priceL1, systemHeader));
+            outRows.push(contentRow(priceL2, systemLine));
+            // ├──┼──┤
+            outRows.push(divBoth);
+            // STAKING / BALANCE
+            outRows.push(contentRow(stakingHeader, balanceHeader));
+            outRows.push(contentRow(stakingData, balanceLine));
+            // ├──┼──┤
+            outRows.push(divBoth);
+            // DIEM / WALLET (continuous right)
+            outRows.push(contentRow(diemHeader, walletHeader));
+            outRows.push(contentRow(diemData, walletAddrLine));
+            // ├──┤ left only — right continues
+            outRows.push(divLeftRow(walletPortLine));
+            // 24H MARKET / wallet+exposure continues
+            outRows.push(contentRow(mktHeader, walletSvvvLine));
+            outRows.push(contentRow(mktLine1, expHeader));
+            outRows.push(contentRow(mktLine2, expLine));
+            outRows.push(borderBot);
           } else {
-            // Narrow mode: stack everything vertically
-            for (const l of leftLines) outRows.push(fitLine(l, width));
+            // Narrow mode: stack everything vertically, no box
+            const lines = [priceL1, priceL2];
+            if (stakingData) { lines.push(dim(H.repeat(width))); lines.push(stakingHeader, stakingData); }
+            if (diemData)    { lines.push(dim(H.repeat(width))); lines.push(diemHeader, diemData); }
+            if (mktLine1)    { lines.push(dim(H.repeat(width))); lines.push(mktHeader, mktLine1, mktLine2); }
             const clockParts = [clock.time, clock.epoch, clock.usd, clock.diem].filter(Boolean);
             if (clockParts.length) {
-              outRows.push(theme.fg("dim", "\u2500".repeat(width)));
-              outRows.push(fitLine(clockParts.join("   "), width));
+              lines.push(dim(H.repeat(width)));
+              lines.push(clockParts.join("   "));
             }
-            // Wallet in narrow mode — use panel render
             if (panels.includes("wallet")) {
               const walletPanel = PANEL_REGISTRY.wallet;
               if (walletPanel) {
                 const line = walletPanel.render(allData, theme as any, spc, width);
                 if (line !== null) {
-                  outRows.push(theme.fg("dim", "\u2500".repeat(width)));
-                  if (Array.isArray(line)) for (const l of line) outRows.push(fitLine(l, width));
-                  else outRows.push(fitLine(line, width));
+                  lines.push(dim(H.repeat(width)));
+                  if (Array.isArray(line)) for (const l of line) lines.push(l);
+                  else lines.push(line);
                 }
               }
             }
+            for (const l of lines) outRows.push(fitLine(l, width));
           }
 
           return outRows;

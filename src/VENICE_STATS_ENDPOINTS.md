@@ -144,7 +144,7 @@ Time-series data with up to 200 points per series (LTTB downsampled).
 **Params:**
 | Param | Type | Default | Description |
 |-------|------|---------|-------------|
-| `period` | string | `7d` | `7d`, `30d`, `90d`, `1y`, `all` |
+| `period` | string | `7d` | `1h`, `24h`, `7d`, `30d`, `90d`, `1y`, `all` |
 | `metric` | string | *(all)* | Single series name (omit for all 17) |
 
 **Available series:** `vvvPrice`, `diemPrice`, `ethPrice`, `stakingRatio`, `totalStaked`, `lockRatio`, `svvvLocked`, `diemSupply`, `diemStaked`, `diemStakeRatio`, `mintRate`, `mintParity`, `burns`, `diemEvents`, `diemDistribution`, `diemStakerGrowth`, `cooldownWave`
