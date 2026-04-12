@@ -124,6 +124,12 @@ function plog(msg: string) {
 // Widget
 // ---------------------------------------------------------------------------
 
+export interface WidgetController {
+  /** Trigger an out-of-schedule billing refresh. Call after an agent response
+   * so the balance updates promptly rather than waiting for the next interval. */
+  triggerBillingRefresh(): void;
+}
+
 export function startPriceWidget(
   ctx:                ExtensionContext,
   getWallet:          () => string | undefined,
@@ -132,9 +138,12 @@ export function startPriceWidget(
   getTimezone:        () => string,
   getTimeFormat:      () => "24h" | "12h",
   getBillingInterval: () => number,
-): void {
+): WidgetController {
+  const controller: WidgetController = {
+    triggerBillingRefresh: () => {}, // wired up once the widget factory runs
+  };
   plog(`startPriceWidget called — hasUI=${ctx.hasUI}`);
-  if (!ctx.hasUI) return;
+  if (!ctx.hasUI) return controller;
 
   ctx.ui.setWidget(
     STATS_WIDGET_KEY,
@@ -308,6 +317,11 @@ export function startPriceWidget(
 
       const lastFetch = new Map<string, number>();
 
+      // Wire the controller so agent_end can trigger an early billing refresh
+      controller.triggerBillingRefresh = () => {
+        lastFetch.set("billing", 0);
+      };
+
       function clampBillingMs(): number {
         return Math.max(
           BILLING_INTERVAL_MIN * 1000,
@@ -403,6 +417,7 @@ export function startPriceWidget(
         dispose() {
           plog("dispose() called");
           disposed = true;
+          controller.triggerBillingRefresh = () => {};
           clearInterval(ticker);
           clearInterval(clockTick);
           if (vvvFlashTimer)  clearTimeout(vvvFlashTimer);
@@ -413,6 +428,7 @@ export function startPriceWidget(
     { placement: "belowEditor" },
   );
   plog("setWidget call returned");
+  return controller;
 }
 
 export function stopPriceWidget(ctx: ExtensionContext): void {

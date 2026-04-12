@@ -146,7 +146,7 @@ export const SOURCE_WEIGHTS: Record<string, number> = {
 };
 
 /** Default billing poll interval in seconds. */
-export const BILLING_INTERVAL_DEFAULT = 30;
+export const BILLING_INTERVAL_DEFAULT = 60;
 /** Minimum billing poll interval in seconds. */
 export const BILLING_INTERVAL_MIN = 5;
 /** Maximum billing poll interval in seconds. */
@@ -300,11 +300,20 @@ export function renderClock(
     row1Parts.push(theme.fg("dim", "next epoch ") + theme.fg("accent", epochStr));
   }
 
+  // Adaptive precision: more decimal places for smaller values
+  const fmtDiem = (n: number): string => {
+    if (n < 1)   return n.toFixed(6);
+    if (n < 10)  return n.toFixed(4);
+    if (n < 100) return n.toFixed(2);
+    return n.toFixed(1);
+  };
+  const fmtUsd = (n: number): string => n < 1 ? n.toFixed(4) : n.toFixed(2);
+
   // Row 2: $X.XX USD  ·  DIEM Balance X / Y used
   const row2Parts: string[] = [];
   if (billing.usdBalance !== null && billing.usdBalance >= 0.01) {
     row2Parts.push(
-      theme.fg("dim", "$") + theme.fg("text", billing.usdBalance.toFixed(2)) +
+      theme.fg("dim", "$") + theme.fg("text", fmtUsd(billing.usdBalance)) +
       theme.fg("dim", " USD")
     );
   }
@@ -316,9 +325,9 @@ export function renderClock(
     const diemColor = remainingPct < 10 ? "error" : "text";
     row2Parts.push(
       theme.fg("dim", "DIEM Balance ") +
-      theme.fg(diemColor, usedDiem.toFixed(2)) +
+      theme.fg(diemColor, fmtDiem(usedDiem)) +
       theme.fg("dim", " / ") +
-      theme.fg("text", billing.diemEpochAllocation.toFixed(2)) +
+      theme.fg("text", fmtDiem(billing.diemEpochAllocation)) +
       theme.fg("dim", " used")
     );
   }
