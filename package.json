@@ -14,7 +14,8 @@
   ],
   "pi": {
     "extensions": [
-      "./src/index.ts"
+      "./src/index.ts",
+      "npm:pi-mcp-adapter"
     ]
   },
   "keywords": [

@@ -41,15 +41,15 @@ export VENICE_ADMIN_API_KEY="your-venice-admin-key"
 **Time / timezone commands:**
 
 ```text
-/vstats-tz                       ← show current (auto-detected)
-/vstats-tz America/New_York      ← set IANA timezone
-/vstats-tz reset                 ← restore auto-detection
-/vstats-time-format 12h          ← 12-hour time (default is 24h)
-/vstats-time-format 24h
-/vstats-time-format reset
-/vstats-billing-interval         ← show current (default 30s, range 5–600s)
-/vstats-billing-interval 60      ← set new interval (takes effect on next tick)
-/vstats-billing-interval reset
+/venice-stats-tz                       ← show current (auto-detected)
+/venice-stats-tz America/New_York      ← set IANA timezone
+/venice-stats-tz reset                 ← restore auto-detection
+/venice-stats-time-format 12h          ← 12-hour time (default is 24h)
+/venice-stats-time-format 24h
+/venice-stats-time-format reset
+/venice-stats-billing-interval         ← show current (default 30s, range 5–600s)
+/venice-stats-billing-interval 60      ← set new interval (takes effect on next tick)
+/venice-stats-billing-interval reset
 ```
 
 ## Tracking your wallet
@@ -61,9 +61,9 @@ export VENICE_WALLET=0x<your-address>
 Or set from inside the TUI (persisted across sessions):
 
 ```text
-/vstats-wallet 0x<your-address>
-/vstats-wallet          ← show current
-/vstats-wallet clear    ← remove
+/venice-stats-wallet 0x<your-address>
+/venice-stats-wallet          ← show current
+/venice-stats-wallet clear    ← remove
 ```
 
 ## Dashboard panels
@@ -72,17 +72,17 @@ Most panels are a single row; the wallet panel spans two rows.
 
 **List all panels:**
 ```text
-/vstats-panels
+/venice-stats-panels
 ```
 
 **Add / remove / reorder:**
 ```text
-/vstats-panel add <id>
-/vstats-panel add all      ← enable every available panel
-/vstats-panel remove <id>
-/vstats-panel move <id> up
-/vstats-panel move <id> down
-/vstats-panel reset        ← restore defaults: prices, protocol, wallet
+/venice-stats-panel add <id>
+/venice-stats-panel add all      ← enable every available panel
+/venice-stats-panel remove <id>
+/venice-stats-panel move <id> up
+/venice-stats-panel move <id> down
+/venice-stats-panel reset        ← restore defaults: prices, protocol, wallet
 ```
 
 **Available panels:**
@@ -102,14 +102,14 @@ Most panels are a single row; the wallet panel spans two rows.
 **Dynamic rate allocation** — targets a configurable budget (default **30 req/min**, range **1–59**), shared automatically across active data sources.
 
 ```text
-/vstats-budget          ← show current budget
-/vstats-budget 10       ← low-bandwidth mode
-/vstats-budget 30       ← default
-/vstats-budget 59       ← near-maximum
-/vstats-budget reset    ← restore default (30)
+/venice-stats-budget          ← show current budget
+/venice-stats-budget 10       ← low-bandwidth mode
+/venice-stats-budget 30       ← default
+/venice-stats-budget 59       ← near-maximum
+/venice-stats-budget reset    ← restore default (30)
 ```
 
-> **Multi-session warning** — only the first `pi` session to start renders the widget. Others display an info notice and make no requests. If the owning session exited without releasing the lock, run `/vstats-widget claim` to take over.
+> **Multi-session warning** — only the first `pi` session to start renders the widget. Others display an info notice and make no requests. If the owning session exited without releasing the lock, run `/venice-stats-widget claim` to take over.
 
 ## License
 
