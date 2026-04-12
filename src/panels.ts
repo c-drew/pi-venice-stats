@@ -25,6 +25,7 @@ export interface MetricsData {
   stakingRatio: number;
   stakerApr: number;
   lockRatio: number;
+  totalVvvStaked: number;
   mintRate: number;
   diemSupply: number;
   remainingMintable: number;
@@ -32,12 +33,15 @@ export interface MetricsData {
   stakingGrowth7d: number;
   newStakers7dCount: number;
   cooldownVvv: number;
+  cooldownWallets: number;
+  cooldownCount: number;
   veniceRevenue: number;
   burnRevenueAnnualized: number;
   totalBurnedFromEvents: number;
   organicBurned: number;
   burnDeflationRate: number;
   emissionRate: number;
+  netFlow7d: number;
 }
 
 export interface WalletData {
@@ -63,6 +67,14 @@ export interface MarketsData {
   volume: number;
   buyPct: number;
   traders: number;
+  // 24h period changes (computed from current vs previous period)
+  volumeChange: number | null;
+  traderGrowth: number | null;
+  swaps: number | null;
+  swapGrowth: number | null;
+  // top pool
+  topPoolName: string | null;
+  topPoolShare: number | null;
 }
 
 export interface BillingData {
@@ -73,6 +85,23 @@ export interface BillingData {
   diemEpochAllocation: number;
 }
 
+export interface ChartsData {
+  /** 24h price values in chronological order (LTTB-downsampled). */
+  vvvPrices: number[];
+  diemPrices: number[];
+  /** 7d cooldown wave series (VVV in cooldown queue at each timestamp). */
+  cooldownWave: number[];
+}
+
+export interface WalletExposure {
+  /** 8-level sparkline string (last 20 data points). */
+  sparkline: string;
+  /** Latest total exposure in USD. */
+  currentExposure: number;
+  /** Percentage change over the fetched period. */
+  changePct: number;
+}
+
 export interface AllData {
   metrics: MetricsData | null;
   wallet: WalletData | null;
@@ -80,6 +109,8 @@ export interface AllData {
   social: SocialData | null;
   markets: MarketsData | null;
   billing: BillingData | null;
+  charts: ChartsData | null;
+  walletExposure: WalletExposure | null;
   flash: { vvv: "up" | "down" | null; diem: "up" | "down" | null };
 }
 
@@ -114,6 +145,14 @@ export function fmtK(n: number): string {
   return String(Math.round(n));
 }
 
+/** Signed VVV amount: +286k, -1.2M, +42 */
+export function fmtVVV(n: number): string {
+  const sign = n >= 0 ? "+" : "";
+  if (Math.abs(n) >= 1_000_000) return `${sign}${(n / 1_000_000).toFixed(1)}M`;
+  if (Math.abs(n) >= 1_000) return `${sign}${(n / 1_000).toFixed(0)}k`;
+  return `${sign}${Math.round(n)}`;
+}
+
 /** 4-significant-digit formatter with comma thousands separator.
  *  3300 → "3,300"  |  12345 → "12,345"  |  1023456 → "1.023M"
  */
@@ -124,6 +163,51 @@ export function fmtNum4(n: number): string {
 
 export function fmtAddr(addr: string): string {
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
+}
+
+/** Block-character gauge bar. ratio is 0–1, barWidth is char count. */
+export function gauge(ratio: number, barWidth: number, theme: MiniTheme, color: string = "accent"): string {
+  const clamped = Math.max(0, Math.min(1, ratio));
+  const filled  = Math.round(clamped * barWidth);
+  return theme.fg(color as any, "█".repeat(filled)) + theme.fg("dim", "░".repeat(barWidth - filled));
+}
+
+/** Arrow + percentage, e.g. ↑5.2% or ↓1.3% */
+export function arrow(pct: number): string {
+  return pct >= 0 ? `↑${pct.toFixed(1)}%` : `↓${Math.abs(pct).toFixed(1)}%`;
+}
+
+/** Compute a gauge bar width relative to the terminal width. */
+export function gaugeWidth(termWidth: number, pct = 0.06): number {
+  return Math.max(5, Math.min(12, Math.round(termWidth * pct)));
+}
+
+/** Thin-sample an array to at most `count` evenly-spaced values. */
+function downsample(values: number[], count: number): number[] {
+  if (values.length <= count) return values;
+  const result: number[] = [];
+  const step = (values.length - 1) / (count - 1);
+  for (let i = 0; i < count; i++) result.push(values[Math.round(i * step)]);
+  return result;
+}
+
+const SPARK_BLOCKS = "▁▂▃▄▅▆▇█";
+
+/**
+ * Convert an array of values into an 8-level block-character sparkline.
+ * charCount controls how many characters wide the result is.
+ * Returns empty string when values array is empty.
+ */
+export function sparkline(values: number[], charCount: number): string {
+  if (values.length === 0) return "";
+  const pts = downsample(values, charCount);
+  const min = Math.min(...pts);
+  const max = Math.max(...pts);
+  const range = max - min;
+  return pts.map(v => {
+    const idx = range === 0 ? 3 : Math.round(((v - min) / range) * (SPARK_BLOCKS.length - 1));
+    return SPARK_BLOCKS[idx];
+  }).join("");
 }
 
 
@@ -143,6 +227,7 @@ export const SOURCE_WEIGHTS: Record<string, number> = {
   markets:  2, // DEX aggregates
   wallet:   1, // Venetian wallet data (changes slowly)
   social: 0.5, // social signals (changes very slowly)
+  charts: 0.3, // historical chart data for sparklines (rarely changes)
 };
 
 /** Default billing poll interval in seconds. */
@@ -164,16 +249,17 @@ export interface PanelDef {
   sources: Array<keyof typeof SOURCE_WEIGHTS>;
   /**
    * Render to a single terminal line. Return null to hide the row (e.g. data not
-   * yet loaded). The sep helper produces the themed mid-dot separator.
+   * yet loaded). The sep helper produces the themed separator. width is the
+   * terminal column count — use it for adaptive gauge widths etc.
    */
-  render(data: AllData, theme: MiniTheme, sep: string): string | string[] | null;
+  render(data: AllData, theme: MiniTheme, sep: string, width: number): string | string[] | null;
 }
 
 // ---------------------------------------------------------------------------
 // Venetian tier lookups (wallet panel)
 // ---------------------------------------------------------------------------
 
-const SIZE_EMOJI: Record<string, string> = {
+export const SIZE_EMOJI: Record<string, string> = {
   Leviathan:  "🐉",
   Whale:      "🐋",
   Shark:      "🦈",
@@ -188,7 +274,7 @@ const SIZE_EMOJI: Record<string, string> = {
   Plankton:   "🫧",
 };
 
-const ROLE_COLOR: Record<string, string> = {
+export const ROLE_COLOR: Record<string, string> = {
   Mercenary:  "error",    // red
   Gondolier:  "muted",    // lighter grey
   Glassblower:"accent",   // blue
@@ -230,33 +316,22 @@ function getTzAbbr(tz: string): string {
   }
 }
 
-/**
- * Render the clock line that appears right-aligned on the top row of the widget.
- *
- * When billing data is present, shows:
- *   TZAbbrev HH:MM:SS  ·  allocation/balance DIEM  ·  reset Xh XXm XXs
- * When billing data is absent (no VENICE_ADMIN_API_KEY), shows just:
- *   TZAbbrev HH:MM:SS
- *
- * The DIEM reset countdown and balance segment are only shown when we actually
- * have billing data — they're irrelevant without a staking account.
- */
-/**
- * Returns [row1, row2] where:
- *   row1 — time + "next epoch" countdown (always present)
- *   row2 — USD balance + DIEM balance (empty string when no billing data)
- */
+export interface ClockParts {
+  time: string;
+  epoch: string;
+  usd: string;
+  diem: string;
+}
+
 export function renderClock(
   theme: MiniTheme,
   timezone: string,
   timeFormat: "24h" | "12h",
   billing?: BillingData | null,
-): [string, string] {
+): ClockParts {
   const now = new Date();
   const use12h = timeFormat === "12h";
-  const sep = theme.fg("dim", "  ·  ");
 
-  // Format current time in the user's chosen timezone
   let timeStr: string;
   let tzAbbr: string;
   try {
@@ -270,7 +345,6 @@ export function renderClock(
     timeStr = now.toLocaleTimeString("en-US", options);
     tzAbbr = getTzAbbr(timezone);
   } catch {
-    // Invalid timezone — fall back to UTC
     const hh = String(now.getUTCHours()).padStart(2, "0");
     const mm = String(now.getUTCMinutes()).padStart(2, "0");
     const ss = String(now.getUTCSeconds()).padStart(2, "0");
@@ -280,15 +354,13 @@ export function renderClock(
     tzAbbr = "UTC";
   }
 
-  const timeSegment = theme.fg("dim", tzAbbr + " ") + theme.fg("text", timeStr);
+  const time = theme.fg("dim", tzAbbr + " ") + theme.fg("text", timeStr);
 
-  // No billing data — just the time on row 1, nothing on row 2
   if (!billing || (billing.diemBalance === null && billing.usdBalance === null)) {
-    return [timeSegment, ""];
+    return { time, epoch: "", usd: "", diem: "" };
   }
 
-  // Row 1: time  ·  next epoch Xh YYm ZZs
-  const row1Parts: string[] = [timeSegment];
+  let epoch = "";
   if (billing.diemBalance !== null) {
     const midnight = new Date(now);
     midnight.setUTCHours(24, 0, 0, 0);
@@ -296,44 +368,39 @@ export function renderClock(
     const diffH = Math.floor(diffMs / 3_600_000);
     const diffM = Math.floor((diffMs % 3_600_000) / 60_000);
     const diffS = Math.floor((diffMs % 60_000) / 1_000);
-    const epochStr = `${diffH}h ${String(diffM).padStart(2, "0")}m ${String(diffS).padStart(2, "0")}s`;
-    row1Parts.push(theme.fg("dim", "next epoch ") + theme.fg("accent", epochStr));
+    epoch = theme.fg("dim", "next epoch ") +
+      theme.fg("accent", `${diffH}h ${String(diffM).padStart(2, "0")}m ${String(diffS).padStart(2, "0")}s`);
   }
 
-  // Precision is set by epoch allocation size, with a finer-grained trigger
-  // when remaining balance drops below 1 DIEM regardless of allocation.
   const diemRemaining = billing.diemBalance ?? 0;
   const diemDecimals =
     billing.diemEpochAllocation < 1  || diemRemaining < 1  ? 6 :
     billing.diemEpochAllocation < 10 || diemRemaining < 10 ? 4 :
     2;
-  const fmtDiem = (n: number): string => n.toFixed(diemDecimals);
-  const fmtUsd = (n: number): string => n < 1 ? n.toFixed(4) : n.toFixed(2);
+  const fmtDiemVal = (n: number): string => n.toFixed(diemDecimals);
+  const fmtUsdVal  = (n: number): string => n < 1 ? n.toFixed(4) : n.toFixed(2);
 
-  // Row 2: $X.XX USD  ·  DIEM Balance X / Y used
-  const row2Parts: string[] = [];
+  let usd = "";
   if (billing.usdBalance !== null && billing.usdBalance >= 0.01) {
-    row2Parts.push(
-      theme.fg("dim", "$") + theme.fg("text", fmtUsd(billing.usdBalance)) +
-      theme.fg("dim", " USD")
-    );
+    usd = theme.fg("dim", "$") + theme.fg("text", fmtUsdVal(billing.usdBalance)) + theme.fg("dim", " USD");
   }
+
+  let diem = "";
   if (billing.diemBalance !== null) {
     const remainingPct = billing.diemEpochAllocation > 0
       ? (billing.diemBalance / billing.diemEpochAllocation) * 100
       : 100;
     const usedDiem  = billing.diemEpochAllocation - billing.diemBalance;
     const diemColor = remainingPct < 10 ? "error" : "text";
-    row2Parts.push(
-      theme.fg("dim", "DIEM Balance ") +
-      theme.fg(diemColor, fmtDiem(usedDiem)) +
+    diem =
+      theme.fg("dim", "DIEM ") +
+      theme.fg(diemColor, fmtDiemVal(usedDiem)) +
       theme.fg("dim", " / ") +
-      theme.fg("text", fmtDiem(billing.diemEpochAllocation)) +
-      theme.fg("dim", " used")
-    );
+      theme.fg("text", fmtDiemVal(billing.diemEpochAllocation)) +
+      theme.fg("dim", " used");
   }
 
-  return [row1Parts.join(sep), row2Parts.join(sep)];
+  return { time, epoch, usd, diem };
 }
 
 export const PANEL_REGISTRY: Record<string, PanelDef> = {
@@ -342,24 +409,37 @@ export const PANEL_REGISTRY: Record<string, PanelDef> = {
   prices: {
     id: "prices",
     label: "Prices",
-    description: "VVV + DIEM spot prices with 24h % change and ETH. Prices flash green/red on tick.",
-    sources: ["metrics"],
-    render({ metrics, flash }, theme, sep) {
+    description: "VVV + DIEM spot prices with 24h sparkline, market cap, and CoinGecko rank.",
+    sources: ["metrics", "charts", "social"],
+    render({ metrics, flash, charts }, theme, sep, _width) {
       if (!metrics) return null;
       const vvvColor  = flash.vvv  === "up" ? "success" : flash.vvv  === "down" ? "error" : "text";
       const diemColor = flash.diem === "up" ? "success" : flash.diem === "down" ? "error" : "text";
-      const vvvChg    = metrics.priceChange24h  >= 0 ? "success" : "error";
+      const vvvChg    = metrics.priceChange24h     >= 0 ? "success" : "error";
       const diemChg   = metrics.diemPriceChange24h >= 0 ? "success" : "error";
+      const D = theme.fg("dim", "│"); // sparkline box wall
+
+      // Short fixed-width sparklines (12 chars) boxed with │...│
+      const SPARK_W = 12;
+      const vvvSpark  = charts?.vvvPrices.length
+        ? " " + D + theme.fg(vvvChg,  sparkline(charts.vvvPrices,  SPARK_W)) + D
+        : "";
+      const diemSpark = charts?.diemPrices.length
+        ? " " + D + theme.fg(diemChg, sparkline(charts.diemPrices, SPARK_W)) + D
+        : "";
+
+      const diemMCap = metrics.diemPrice * metrics.diemSupply;
+
       return (
         theme.fg("dim",    "VVV ")  +
         theme.fg(vvvColor, `$${metrics.vvvPrice.toFixed(4)}`) +
-        theme.fg(vvvChg,   ` ${fmtPct(metrics.priceChange24h)} 24h`) +
+        theme.fg(vvvChg,   ` ${arrow(metrics.priceChange24h)}`) + theme.fg("dim", " 24h") +
+        vvvSpark + theme.fg("dim", " MCap ") + theme.fg("text", fmtUSD(metrics.marketCap)) +
         sep +
         theme.fg("dim",     "DIEM ") +
         theme.fg(diemColor, `$${metrics.diemPrice.toFixed(2)}`) +
-        theme.fg(diemChg,   ` ${fmtPct(metrics.diemPriceChange24h)} 24h`) +
-        sep +
-        theme.fg("dim",  "ETH ") + theme.fg("text", `$${metrics.ethPrice.toFixed(2)}`)
+        theme.fg(diemChg,   ` ${arrow(metrics.diemPriceChange24h)}`) + theme.fg("dim", " 24h") +
+        diemSpark + theme.fg("dim", " MCap ") + theme.fg("text", fmtUSD(diemMCap))
       );
     },
   },
@@ -368,17 +448,18 @@ export const PANEL_REGISTRY: Record<string, PanelDef> = {
   protocol: {
     id: "protocol",
     label: "Protocol",
-    description: "Market cap, staking ratio, staker APR, and sVVV lock ratio.",
+    description: "Market cap, staking ratio, staker APR, and sVVV lock ratio. (See 'staking' for cooldown data.)",
     sources: ["metrics"],
-    render({ metrics }, theme, sep) {
+    render({ metrics }, theme, sep, width) {
       if (!metrics) return null;
+      const gw = gaugeWidth(width);
       return (
         theme.fg("dim",  "MCap ")   + theme.fg("text", fmtUSD(metrics.marketCap)) +
         sep +
-        theme.fg("dim",  "Staked ") + theme.fg("text", `${metrics.stakingRatio.toFixed(1)}%`) +
+        theme.fg("dim",  "Staked ") + gauge(metrics.stakingRatio / 100, gw, theme) + theme.fg("text", ` ${metrics.stakingRatio.toFixed(1)}%`) +
         theme.fg("dim",  " @ ")     + theme.fg("text", `${metrics.stakerApr.toFixed(1)}% APR`) +
         sep +
-        theme.fg("dim",  "Locked ") + theme.fg("text", `${metrics.lockRatio.toFixed(1)}%`)
+        theme.fg("dim",  "Locked ") + gauge(metrics.lockRatio / 100, gw, theme, "syntaxType") + theme.fg("text", ` ${metrics.lockRatio.toFixed(1)}%`)
       );
     },
   },
@@ -387,9 +468,9 @@ export const PANEL_REGISTRY: Record<string, PanelDef> = {
   wallet: {
     id: "wallet",
     label: "Wallet",
-    description: "Your Venetian: sVVV staked, DIEM staked, pending rewards, role and rank. Set address with /venice-wallet <0x…>.",
+    description: "Your Venetian: sVVV balance, pending rewards, role, rank, and 7d exposure sparkline. Set address with /venice-wallet <0x…>.",
     sources: ["wallet"] as Array<keyof typeof SOURCE_WEIGHTS>,
-    render({ wallet, walletAddr, metrics }, theme, sep) {
+    render({ wallet, walletAddr, metrics }, theme, sep, _width) {
       if (!walletAddr) {
         return theme.fg("dim", "Wallet: /venice-wallet <0x…> or VENICE_WALLET=0x…");
       }
@@ -410,8 +491,6 @@ export const PANEL_REGISTRY: Record<string, PanelDef> = {
         theme.fg("dim", " ⎿ ") +
         theme.fg("dim", "sVVV ")         + theme.fg("text", fmtNum4(wallet.svvvBalance)) +
         sep +
-        theme.fg("dim", "DIEM staked ")  + theme.fg("text", wallet.diemStaked.toFixed(2)) +
-        sep +
         theme.fg("dim", "Pending ")      + theme.fg("success", `${wallet.pendingRewards.toFixed(2)} VVV`);
       return [line1, line2];
     },
@@ -423,8 +502,9 @@ export const PANEL_REGISTRY: Record<string, PanelDef> = {
     label: "DIEM",
     description: "DIEM supply, daily mint rate, days until cap, and stake ratio.",
     sources: ["metrics"],
-    render({ metrics }, theme, sep) {
+    render({ metrics }, theme, sep, width) {
       if (!metrics) return null;
+      const gw = gaugeWidth(width, 0.05);
       return (
         theme.fg("dim",  "DIEM Supply ")    + theme.fg("text", fmtK(metrics.diemSupply)) +
         sep +
@@ -432,46 +512,7 @@ export const PANEL_REGISTRY: Record<string, PanelDef> = {
         sep +
         theme.fg("dim",  "Remaining Mintable ") + theme.fg("text", fmtK(metrics.remainingMintable)) +
         sep +
-        theme.fg("dim",  "Staked ")        + theme.fg("text", `${(metrics.diemStakeRatio * 100).toFixed(1)}%`)
-      );
-    },
-  },
-
-  // ── social ────────────────────────────────────────────────────────────────
-  social: {
-    id: "social",
-    label: "Social",
-    description: "Erik Voorhees followers, CoinGecko sentiment %, VVV + DIEM market cap ranks.",
-    sources: ["social"] as Array<keyof typeof SOURCE_WEIGHTS>,
-    render({ social }, theme, sep) {
-      if (!social) return null;
-      const sentColor = social.sentimentUpPct >= 50 ? "success" : "error";
-      return (
-        theme.fg("dim",      "Erik Voorhees ") + theme.fg("text", fmtK(social.erikFollowers)) +
-        sep +
-        theme.fg("dim",      "Sentiment ")  + theme.fg(sentColor, `${social.sentimentUpPct.toFixed(0)}% ↑`) +
-        sep +
-        theme.fg("dim",      "MCap #")      + theme.fg("text", String(social.marketCapRank)) +
-        sep +
-        theme.fg("dim",      "DIEM #")      + theme.fg("text", String(social.diemMarketCapRank))
-      );
-    },
-  },
-
-  // ── burns ─────────────────────────────────────────────────────────────────
-  burns: {
-    id: "burns",
-    label: "Burns",
-    description: "Total VVV burned, organic burn volume, and annual deflation rate.",
-    sources: ["metrics"],
-    render({ metrics }, theme, sep) {
-      if (!metrics) return null;
-      return (
-        theme.fg("dim",  "Burned ")   + theme.fg("text", fmtK(metrics.totalBurnedFromEvents) + " VVV") +
-        sep +
-        theme.fg("dim",  "Organic Burn ")  + theme.fg("text", fmtK(metrics.organicBurned) + " VVV") +
-        sep +
-        theme.fg("dim",  "Deflation ") + theme.fg("text", `${metrics.burnDeflationRate.toFixed(2)}%/yr`)
+        theme.fg("dim",  "Staked ") + gauge(metrics.diemStakeRatio, gw, theme) + theme.fg("text", ` ${(metrics.diemStakeRatio * 100).toFixed(1)}%`)
       );
     },
   },
@@ -480,60 +521,91 @@ export const PANEL_REGISTRY: Record<string, PanelDef> = {
   staking: {
     id: "staking",
     label: "Staking",
-    description: "New stakers (7d), 7d staking growth, and VVV currently in cooldown.",
-    sources: ["metrics"],
-    render({ metrics }, theme, sep) {
+    description: "Staking + lock ratios with gauges, and cooldown wave sparkline with 7d trend.",
+    sources: ["metrics", "charts"],
+    render({ metrics, charts }, theme, sep, width) {
       if (!metrics) return null;
-      const growthColor = metrics.stakingGrowth7d >= 1 ? "success" : "error";
-      const growthPct   = (metrics.stakingGrowth7d - 1) * 100;
-      return (
-        theme.fg("text", String(metrics.newStakers7dCount)) + theme.fg("dim", " New Stakers (7d)") +
+      const gw = gaugeWidth(width);
+
+      const row1 =
+        theme.fg("dim",  "Staked ") + gauge(metrics.stakingRatio / 100, gw, theme) +
+        theme.fg("text", ` ${metrics.stakingRatio.toFixed(1)}%`) +
+        theme.fg("dim",  " @ ")     + theme.fg("text", `${metrics.stakerApr.toFixed(1)}% APR`) +
         sep +
-        theme.fg("dim",        "7d Growth ")      + theme.fg(growthColor, fmtPct(growthPct)) +
-        sep +
-        theme.fg("dim",        "Cooldown ")        + theme.fg("text", `${fmtK(metrics.cooldownVvv)} VVV`)
-      );
+        theme.fg("dim",  "Locked ") + gauge(metrics.lockRatio / 100, gw, theme, "syntaxType") +
+        theme.fg("text", ` ${metrics.lockRatio.toFixed(1)}%`);
+
+      const wave   = charts?.cooldownWave ?? [];
+      const waveChg = wave.length >= 2
+        ? ((wave[wave.length - 1] - wave[0]) / wave[0]) * 100
+        : 0;
+      const waveDir = waveChg <= -2 ? "success" : waveChg >= 2 ? "error" : "text";
+      const COOL_SPARK_W = 11;
+
+      const row2 =
+        theme.fg("dim", "Cooldown ") +
+        (wave.length ? theme.fg(waveDir, sparkline(wave, COOL_SPARK_W)) + " " : "") +
+        theme.fg("text", fmtK(metrics.cooldownVvv)) + theme.fg("dim", " VVV") +
+        (wave.length >= 2 ? theme.fg(waveDir, ` ${arrow(waveChg)}`) + theme.fg("dim", " 7d") : "");
+
+      return [row1, row2];
     },
   },
 
-  // ── markets ───────────────────────────────────────────────────────────────
+  // ── markets (24H MARKET) ──────────────────────────────────────────────────
   markets: {
     id: "markets",
-    label: "Markets",
-    description: "VVV DEX 24h trading volume, buy%, and unique traders.",
-    sources: ["markets"] as Array<keyof typeof SOURCE_WEIGHTS>,
-    render({ markets }, theme, sep) {
+    label: "24H Market",
+    description: "24h DEX volume, traders, swaps with period changes, buy/sell ratio, net flow, top pool.",
+    sources: ["markets", "metrics"] as Array<keyof typeof SOURCE_WEIGHTS>,
+    render({ markets, metrics }, theme, sep, width) {
       if (!markets) return null;
-      const buyColor = markets.buyPct >= 50 ? "success" : "error";
-      return (
-        theme.fg("dim",   "Vol ")      + theme.fg("text", fmtUSD(markets.volume)) + theme.fg("dim", " 24h") +
-        sep +
-        theme.fg("dim",   "Buys ")     + theme.fg(buyColor, `${markets.buyPct}%`) +
-        sep +
-        theme.fg("dim",   "Traders ")  + theme.fg("text", fmtK(markets.traders))
-      );
-    },
-  },
 
-  // ── revenue ───────────────────────────────────────────────────────────────
-  revenue: {
-    id: "revenue",
-    label: "Revenue",
-    description: "Venice protocol revenue to date, annualized burn revenue, and VVV emission rate.",
-    sources: ["metrics"],
-    render({ metrics }, theme, sep) {
-      if (!metrics) return null;
-      return (
-        theme.fg("dim",  "Revenue ")    + theme.fg("text", fmtUSD(metrics.veniceRevenue)) +
-        sep +
-        theme.fg("dim",  "Ann. Revenue ") + theme.fg("text", fmtUSD(metrics.burnRevenueAnnualized)) +
-        sep +
-        theme.fg("dim",  "VVV Emission ") + theme.fg("text", `${(metrics.emissionRate * 100).toFixed(1)}%/yr`)
-      );
+      const chg = (v: number | null, color = true): string => {
+        if (v == null) return "";
+        const c = v >= 0 ? "success" : "error";
+        return color ? theme.fg(c, ` (${fmtPct(v)})`) : ` (${fmtPct(v)})`;
+      };
+
+      // ── Line 1: header + vol, traders, swaps ──
+      const header = theme.fg("dim", "24H MARKET");
+      const vol = theme.fg("dim", "Vol ") + theme.fg("text", fmtUSD(markets.volume)) + chg(markets.volumeChange);
+      const traders = theme.fg("dim", "Traders ") + theme.fg("text", fmtNum4(markets.traders)) + chg(markets.traderGrowth);
+      const swaps = markets.swaps != null
+        ? theme.fg("dim", "Swaps ") + theme.fg("text", fmtK(markets.swaps)) + chg(markets.swapGrowth)
+        : "";
+
+      const line1Parts = [header, vol, traders];
+      if (swaps && width >= 80) line1Parts.push(swaps);
+      const line1 = line1Parts.join(sep);
+
+      // ── Line 2: buy/sell, net flow, top pool ──
+      const sellPct = 100 - markets.buyPct;
+      const buyColor = markets.buyPct >= 50 ? "success" : "error";
+      const buySell = theme.fg("dim", "Buy/Sell ") + theme.fg(buyColor, `${markets.buyPct}/${sellPct}%`);
+
+      const netFlow = metrics?.netFlow7d != null
+        ? theme.fg("dim", "Net Flow ") +
+          theme.fg(metrics.netFlow7d >= 0 ? "success" : "error", `${fmtVVV(metrics.netFlow7d)} VVV`) +
+          theme.fg("dim", " (7d)")
+        : "";
+
+      const pool = markets.topPoolName != null
+        ? theme.fg("dim", "Top pool: ") +
+          theme.fg("text", markets.topPoolName) +
+          (markets.topPoolShare != null ? theme.fg("dim", ` (${markets.topPoolShare}%)`) : "")
+        : "";
+
+      const line2Parts = [buySell];
+      if (netFlow) line2Parts.push(netFlow);
+      if (pool && width >= 100) line2Parts.push(pool);
+      const line2 = line2Parts.join(sep);
+
+      return [line1, line2];
     },
   },
 
 };
 
 export const PANEL_IDS = Object.keys(PANEL_REGISTRY) as (keyof typeof PANEL_REGISTRY)[];
-export const DEFAULT_PANELS: string[] = ["prices", "protocol", "wallet"];
+export const DEFAULT_PANELS: string[] = ["prices", "staking", "diem", "markets", "wallet"];
