@@ -20,7 +20,7 @@ export function registerVeniceStatsCommands(
     persistConfig(pi, next);
   };
 
-  pi.registerCommand("vstats-panels", {
+  pi.registerCommand("venice-stats-panels", {
     description: "List all available dashboard panels with their descriptions and enabled status.",
     handler: async (_args, ctx) => {
       const enabled = getConfig().widgetPanels ?? DEFAULT_PANELS;
@@ -31,14 +31,14 @@ export function registerVeniceStatsCommands(
         return `${status.padEnd(12)} ${panel.id.padEnd(12)} ${panel.label.padEnd(10)}  ${panel.description}`;
       });
       notify(ctx,
-        `Venice dashboard panels\n\nUse /vstats-panel add|remove|move|reset to configure.\n\n` +
+        `Venice dashboard panels\n\nUse /venice-stats-panel add|remove|move|reset to configure.\n\n` +
         lines.join("\n"),
         "info"
       );
     },
   });
 
-  pi.registerCommand("vstats-panel", {
+  pi.registerCommand("venice-stats-panel", {
     description: "Manage dashboard panels: add <id> | remove <id> | move <id> up|down | reset",
     handler: async (args, ctx) => {
       const parts   = (args ?? "").trim().split(/\s+/).filter(Boolean);
@@ -62,7 +62,7 @@ export function registerVeniceStatsCommands(
           return;
         }
         if (!id || !PANEL_REGISTRY[id]) {
-          notify(ctx, `Unknown panel "${id ?? ""}". Run /vstats-panels to see available panels.`, "error");
+          notify(ctx, `Unknown panel "${id ?? ""}". Run /venice-stats-panels to see available panels.`, "error");
           return;
         }
         if (current.includes(id)) {
@@ -95,7 +95,7 @@ export function registerVeniceStatsCommands(
           return;
         }
         if (dir !== "up" && dir !== "down") {
-          notify(ctx, `Usage: /vstats-panel move <id> up|down`, "error");
+          notify(ctx, `Usage: /venice-stats-panel move <id> up|down`, "error");
           return;
         }
         const next = [...current];
@@ -111,20 +111,20 @@ export function registerVeniceStatsCommands(
       }
 
       notify(ctx,
-        `Usage: /vstats-panel add <id> | remove <id> | move <id> up|down | reset\nRun /vstats-panels to see all panels.`,
+        `Usage: /venice-stats-panel add <id> | remove <id> | move <id> up|down | reset\nRun /venice-stats-panels to see all panels.`,
         "info"
       );
     },
   });
 
-  pi.registerCommand("vstats-wallet", {
-    description: "Show or set your wallet address: /vstats-wallet [0x...] or /vstats-wallet clear",
+  pi.registerCommand("venice-stats-wallet", {
+    description: "Show or set your wallet address: /venice-stats-wallet [0x...] or /venice-stats-wallet clear",
     handler: async (args, ctx) => {
       const addr = (args ?? "").trim();
 
       if (!addr) {
         const current = getConfig().walletAddress ?? process.env["VENICE_WALLET"];
-        notify(ctx, current ? `Wallet: ${current}` : "No wallet set. Use /vstats-wallet <0x...>", "info");
+        notify(ctx, current ? `Wallet: ${current}` : "No wallet set. Use /venice-stats-wallet <0x...>", "info");
         return;
       }
       if (addr === "clear") {
@@ -142,8 +142,8 @@ export function registerVeniceStatsCommands(
     },
   });
 
-  pi.registerCommand("vstats-budget", {
-    description: "Show or set the stats polling budget (1–59 req/min, default 30): /vstats-budget [1-59|reset]",
+  pi.registerCommand("venice-stats-budget", {
+    description: "Show or set the stats polling budget (1–59 req/min, default 30): /venice-stats-budget [1-59|reset]",
     handler: async (args, ctx) => {
       const raw = (args ?? "").trim();
       const BUDGET_DEFAULT = 30;
@@ -171,8 +171,8 @@ export function registerVeniceStatsCommands(
     },
   });
 
-  pi.registerCommand("vstats-tz", {
-    description: "Show or set the widget timezone (auto-detected by default): /vstats-tz [timezone|reset]",
+  pi.registerCommand("venice-stats-tz", {
+    description: "Show or set the widget timezone (auto-detected by default): /venice-stats-tz [timezone|reset]",
     handler: async (args, ctx) => {
       const raw      = (args ?? "").trim();
       const detected = detectTimezone();
@@ -183,7 +183,7 @@ export function registerVeniceStatsCommands(
         const available = Intl.supportedValuesOf ? Intl.supportedValuesOf("timeZone") : undefined;
         let msg = `Widget timezone: ${current} ${source}`;
         if (available) msg += `\nAuto-detected: ${detected}`;
-        msg += `\n\nUsage: /vstats-tz <IANA timezone> to set, /vstats-tz reset to clear.`;
+        msg += `\n\nUsage: /venice-stats-tz <IANA timezone> to set, /venice-stats-tz reset to clear.`;
         notify(ctx, msg, "info");
         return;
       }
@@ -204,15 +204,15 @@ export function registerVeniceStatsCommands(
     },
   });
 
-  pi.registerCommand("vstats-time-format", {
-    description: "Show or set the widget time format (24h or 12h, default 24h): /vstats-time-format [24h|12h|reset]",
+  pi.registerCommand("venice-stats-time-format", {
+    description: "Show or set the widget time format (24h or 12h, default 24h): /venice-stats-time-format [24h|12h|reset]",
     handler: async (args, ctx) => {
       const raw     = (args ?? "").trim().toLowerCase();
       const current = getConfig().widgetTimeFormat ?? "24h";
 
       if (!raw) {
         const source = getConfig().widgetTimeFormat ? "(configured)" : "(default)";
-        notify(ctx, `Widget time format: ${current} ${source}\nUsage: /vstats-time-format 12h or /vstats-time-format 24h or /vstats-time-format reset`, "info");
+        notify(ctx, `Widget time format: ${current} ${source}\nUsage: /venice-stats-time-format 12h or /venice-stats-time-format 24h or /venice-stats-time-format reset`, "info");
         return;
       }
       if (raw === "reset") {
@@ -230,15 +230,15 @@ export function registerVeniceStatsCommands(
     },
   });
 
-  pi.registerCommand("vstats-billing-interval", {
-    description: `Show or set the billing poll interval in seconds (${BILLING_INTERVAL_MIN}–${BILLING_INTERVAL_MAX}, default ${BILLING_INTERVAL_DEFAULT}): /vstats-billing-interval [N|reset]`,
+  pi.registerCommand("venice-stats-billing-interval", {
+    description: `Show or set the billing poll interval in seconds (${BILLING_INTERVAL_MIN}–${BILLING_INTERVAL_MAX}, default ${BILLING_INTERVAL_DEFAULT}): /venice-stats-billing-interval [N|reset]`,
     handler: async (args, ctx) => {
       const raw     = (args ?? "").trim();
       const current = getConfig().billingInterval ?? BILLING_INTERVAL_DEFAULT;
 
       if (!raw) {
         const source = getConfig().billingInterval ? "(configured)" : "(default)";
-        notify(ctx, `Billing poll interval: ${current}s ${source}\nUsage: /vstats-billing-interval <${BILLING_INTERVAL_MIN}-${BILLING_INTERVAL_MAX}> or /vstats-billing-interval reset`, "info");
+        notify(ctx, `Billing poll interval: ${current}s ${source}\nUsage: /venice-stats-billing-interval <${BILLING_INTERVAL_MIN}-${BILLING_INTERVAL_MAX}> or /venice-stats-billing-interval reset`, "info");
         return;
       }
       if (raw === "reset") {
@@ -257,8 +257,8 @@ export function registerVeniceStatsCommands(
     },
   });
 
-  pi.registerCommand("vstats-widget", {
-    description: "Manage the stats widget lock: /vstats-widget claim — take over when the previous session is gone",
+  pi.registerCommand("venice-stats-widget", {
+    description: "Manage the stats widget lock: /venice-stats-widget claim — take over when the previous session is gone",
     handler: async (args, ctx) => {
       const sub = (args ?? "").trim();
       if (sub === "claim") {
@@ -267,12 +267,12 @@ export function registerVeniceStatsCommands(
           startWidget(ctx);
           notify(ctx, "Stats widget claimed — polling started in this session.", "success");
         } else {
-          notify(ctx, "Another pi session is still running and holds the widget lock.\nClose it first, then run /vstats-widget claim again.", "error");
+          notify(ctx, "Another pi session is still running and holds the widget lock.\nClose it first, then run /venice-stats-widget claim again.", "error");
         }
         return;
       }
       notify(ctx,
-        "Usage: /vstats-widget claim — force-take the widget lock when the previous session is gone.",
+        "Usage: /venice-stats-widget claim — force-take the widget lock when the previous session is gone.",
         "info"
       );
     },
