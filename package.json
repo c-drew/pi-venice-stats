@@ -1,0 +1,40 @@
+{
+  "name": "pi-venice-stats",
+  "version": "0.1.0",
+  "description": "Live Venice Protocol stats dashboard for Pi Coding Agent",
+  "license": "Apache-2.0",
+  "type": "module",
+  "module": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "keywords": [
+    "pi",
+    "pi-package",
+    "pi-coding-agent",
+    "pi-extension",
+    "pi-venice",
+    "venice",
+    "venice.ai",
+    "vvv",
+    "diem",
+    "stats"
+  ],
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": "*",
+    "@mariozechner/pi-tui": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "typescript": "^6.0.2"
+  }
+}
