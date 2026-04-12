@@ -212,12 +212,15 @@ export function startPriceWidget(
         if (!disposed) tui.requestRender();
       }
 
+      const sourceErrors = new Map<string, number>();
+
       async function fetchMetrics() {
         try {
           const res = await fetch("https://venicestats.com/api/metrics");
-          if (!res.ok) return;
+          if (!res.ok) { sourceErrors.set("metrics", (sourceErrors.get("metrics") ?? 0) + 1); plog(`metrics error: ${res.status}`); return; }
           const d = await res.json() as any;
-          if (typeof d.vvvPrice !== "number") return;
+          if (typeof d.vvvPrice !== "number") { sourceErrors.set("metrics", (sourceErrors.get("metrics") ?? 0) + 1); return; }
+          sourceErrors.set("metrics", 0);
           if (metrics && d.vvvPrice  !== metrics.vvvPrice)  setFlash("vvv",  d.vvvPrice  > metrics.vvvPrice  ? "up" : "down");
           if (metrics && d.diemPrice !== metrics.diemPrice) setFlash("diem", d.diemPrice > metrics.diemPrice ? "up" : "down");
           metrics = {
@@ -236,7 +239,7 @@ export function startPriceWidget(
           };
           plog(`metrics ok — VVV=$${d.vvvPrice?.toFixed(4)} DIEM=$${d.diemPrice?.toFixed(2)}`);
           logPanels();
-        } catch (err) { plog(`metrics error: ${err}`); }
+        } catch (err) { sourceErrors.set("metrics", (sourceErrors.get("metrics") ?? 0) + 1); plog(`metrics error: ${err}`); }
         if (!disposed) tui.requestRender();
       }
 
@@ -247,7 +250,8 @@ export function startPriceWidget(
         if (addr !== lastWalletAddr) { wallet = null; lastWalletAddr = addr; }
         try {
           const res = await fetch(`https://venicestats.com/api/venetians?address=${addr}`);
-          if (!res.ok) return;
+          if (!res.ok) { sourceErrors.set("wallet", (sourceErrors.get("wallet") ?? 0) + 1); plog(`wallet error: ${res.status}`); return; }
+          sourceErrors.set("wallet", 0);
           const d = await res.json() as any;
           wallet = {
             label: d.ensName ?? fmtAddr(d.address ?? addr),
@@ -258,7 +262,7 @@ export function startPriceWidget(
           };
           plog(`wallet ok — ${wallet.label} rank #${wallet.rank}`);
           logPanels();
-        } catch (err) { plog(`wallet error: ${err}`); }
+        } catch (err) { sourceErrors.set("wallet", (sourceErrors.get("wallet") ?? 0) + 1); plog(`wallet error: ${err}`); }
         if (!disposed) tui.requestRender();
       }
 
@@ -266,7 +270,8 @@ export function startPriceWidget(
         if (!getPanels().includes("social")) return;
         try {
           const res = await fetch("https://venicestats.com/api/social");
-          if (!res.ok) return;
+          if (!res.ok) { sourceErrors.set("social", (sourceErrors.get("social") ?? 0) + 1); plog(`social error: ${res.status}`); return; }
+          sourceErrors.set("social", 0);
           const d = await res.json() as any;
           social = {
             erikFollowers: d.erikFollowers ?? 0, sentimentUpPct: d.sentimentUpPct ?? 0,
@@ -275,7 +280,7 @@ export function startPriceWidget(
           };
           plog(`social ok — Erik ${social.erikFollowers} sentiment=${social.sentimentUpPct.toFixed(0)}%`);
           logPanels();
-        } catch (err) { plog(`social error: ${err}`); }
+        } catch (err) { sourceErrors.set("social", (sourceErrors.get("social") ?? 0) + 1); plog(`social error: ${err}`); }
         if (!disposed) tui.requestRender();
       }
 
@@ -283,12 +288,13 @@ export function startPriceWidget(
         if (!getPanels().includes("markets")) return;
         try {
           const res = await fetch("https://venicestats.com/api/markets?token=VVV&period=24h");
-          if (!res.ok) return;
+          if (!res.ok) { sourceErrors.set("markets", (sourceErrors.get("markets") ?? 0) + 1); plog(`markets error: ${res.status}`); return; }
+          sourceErrors.set("markets", 0);
           const d = await res.json() as any;
           markets = { volume: d.kpis?.volume ?? 0, buyPct: d.kpis?.buyPct ?? 0, traders: d.kpis?.traders ?? 0 };
           plog(`markets ok — vol=$${markets.volume.toFixed(0)} traders=${markets.traders}`);
           logPanels();
-        } catch (err) { plog(`markets error: ${err}`); }
+        } catch (err) { sourceErrors.set("markets", (sourceErrors.get("markets") ?? 0) + 1); plog(`markets error: ${err}`); }
         if (!disposed) tui.requestRender();
       }
 
@@ -354,12 +360,22 @@ export function startPriceWidget(
             flash: { vvv: vvvFlash, diem: diemFlash },
           };
           const rows: string[] = [];
-          for (const id of getPanels()) {
-            const panel = PANEL_REGISTRY[id];
-            if (!panel) continue;
-            const line = panel.render(allData, theme as any, sep);
-            if (Array.isArray(line)) rows.push(...line);
-            else if (line) rows.push(line);
+          const activeStatsSrcs = [...getActiveSources(getPanels())].filter(s => s !== "billing");
+          const dataBySource: Record<string, unknown> = { metrics, wallet, social, markets };
+          const hasAnyData = activeStatsSrcs.some(s => dataBySource[s] != null);
+          const apiDown = activeStatsSrcs.length > 0
+            && !hasAnyData
+            && activeStatsSrcs.every(s => (sourceErrors.get(s) ?? 0) >= 3);
+          if (apiDown) {
+            rows.push(theme.fg("dim", "venicestats.com unavailable, retrying\u2026"));
+          } else {
+            for (const id of getPanels()) {
+              const panel = PANEL_REGISTRY[id];
+              if (!panel) continue;
+              const line = panel.render(allData, theme as any, sep);
+              if (Array.isArray(line)) rows.push(...line);
+              else if (line) rows.push(line);
+            }
           }
 
           const clockStr   = renderClock(theme, getTimezone(), getTimeFormat(), billing);
