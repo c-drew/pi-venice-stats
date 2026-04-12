@@ -241,14 +241,20 @@ function getTzAbbr(tz: string): string {
  * The DIEM reset countdown and balance segment are only shown when we actually
  * have billing data — they're irrelevant without a staking account.
  */
+/**
+ * Returns [row1, row2] where:
+ *   row1 — time + "next epoch" countdown (always present)
+ *   row2 — USD balance + DIEM balance (empty string when no billing data)
+ */
 export function renderClock(
   theme: MiniTheme,
   timezone: string,
   timeFormat: "24h" | "12h",
   billing?: BillingData | null,
-): string {
+): [string, string] {
   const now = new Date();
   const use12h = timeFormat === "12h";
+  const sep = theme.fg("dim", "  ·  ");
 
   // Format current time in the user's chosen timezone
   let timeStr: string;
@@ -274,51 +280,50 @@ export function renderClock(
     tzAbbr = "UTC";
   }
 
-  // If no billing data, show just the time — no DIEM info, no reset countdown
+  const timeSegment = theme.fg("dim", tzAbbr + " ") + theme.fg("text", timeStr);
+
+  // No billing data — just the time on row 1, nothing on row 2
   if (!billing || (billing.diemBalance === null && billing.usdBalance === null)) {
-    return theme.fg("dim", tzAbbr + " ") + theme.fg("text", timeStr);
+    return [timeSegment, ""];
   }
 
-  const parts: string[] = [
-    theme.fg("dim", tzAbbr + " ") + theme.fg("text", timeStr),
-  ];
-
-  // USD balance — sits between time and DIEM. Only shown when >= $0.01.
-  if (billing.usdBalance !== null && billing.usdBalance >= 0.01) {
-    parts.push(
-      theme.fg("dim", "$") + theme.fg("text", billing.usdBalance.toFixed(2)) +
-      theme.fg("dim", " USD")
-    );
-  }
-
-  // DIEM balance (allocation/balance DIEM) + epoch reset countdown.
-  // Red when remaining balance is below 10% of allocation.
+  // Row 1: time  ·  next epoch Xh YYm ZZs
+  const row1Parts: string[] = [timeSegment];
   if (billing.diemBalance !== null) {
-    const remainingPct = billing.diemEpochAllocation > 0
-      ? (billing.diemBalance / billing.diemEpochAllocation) * 100
-      : 100;
-    const usedDiem  = billing.diemEpochAllocation - billing.diemBalance;
-    const diemColor = remainingPct < 10 ? "error" : "text";
-    parts.push(
-      theme.fg("dim", "DIEM Balance ") +
-      theme.fg(diemColor, usedDiem.toFixed(2)) +
-      theme.fg("dim", " / ") +
-      theme.fg("text", billing.diemEpochAllocation.toFixed(2)) +
-      theme.fg("dim", " used")
-    );
-
-    // Countdown to midnight UTC (DIEM epoch reset)
     const midnight = new Date(now);
     midnight.setUTCHours(24, 0, 0, 0);
     const diffMs = midnight.getTime() - now.getTime();
     const diffH = Math.floor(diffMs / 3_600_000);
     const diffM = Math.floor((diffMs % 3_600_000) / 60_000);
     const diffS = Math.floor((diffMs % 60_000) / 1_000);
-    const resetStr = `${diffH}h ${String(diffM).padStart(2, "0")}m ${String(diffS).padStart(2, "0")}s`;
-    parts.push(theme.fg("dim", "reset ") + theme.fg("accent", resetStr));
+    const epochStr = `${diffH}h ${String(diffM).padStart(2, "0")}m ${String(diffS).padStart(2, "0")}s`;
+    row1Parts.push(theme.fg("dim", "next epoch ") + theme.fg("accent", epochStr));
   }
 
-  return parts.join(theme.fg("dim", "  ·  "));
+  // Row 2: $X.XX USD  ·  DIEM Balance X / Y used
+  const row2Parts: string[] = [];
+  if (billing.usdBalance !== null && billing.usdBalance >= 0.01) {
+    row2Parts.push(
+      theme.fg("dim", "$") + theme.fg("text", billing.usdBalance.toFixed(2)) +
+      theme.fg("dim", " USD")
+    );
+  }
+  if (billing.diemBalance !== null) {
+    const remainingPct = billing.diemEpochAllocation > 0
+      ? (billing.diemBalance / billing.diemEpochAllocation) * 100
+      : 100;
+    const usedDiem  = billing.diemEpochAllocation - billing.diemBalance;
+    const diemColor = remainingPct < 10 ? "error" : "text";
+    row2Parts.push(
+      theme.fg("dim", "DIEM Balance ") +
+      theme.fg(diemColor, usedDiem.toFixed(2)) +
+      theme.fg("dim", " / ") +
+      theme.fg("text", billing.diemEpochAllocation.toFixed(2)) +
+      theme.fg("dim", " used")
+    );
+  }
+
+  return [row1Parts.join(sep), row2Parts.join(sep)];
 }
 
 export const PANEL_REGISTRY: Record<string, PanelDef> = {
