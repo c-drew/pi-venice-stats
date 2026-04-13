@@ -59,17 +59,18 @@ Shown in the SYSTEM and BALANCE sections of the right rail. When `VENICE_ADMIN_A
 - **SYSTEM** — `TZAbbrev HH:MM:SS · next epoch Xh YYm ZZs`
 - **BALANCE** — `$X.XX · DIEM X/Y used` (USD omitted when < $0.01; DIEM turns **red** below 10% remaining)
 
-DIEM precision scales dynamically based on your epoch allocation and remaining balance — so small allocations and low balances always show meaningful digits:
+DIEM precision scales dynamically based on your epoch allocation and remaining balance:
 
-| Allocation | Remaining | Decimal places |
+| State | Decimal places | Example |
 |---|---|---|
-| ≥ 10 DIEM | ≥ 10 DIEM | 2 — `0.44 / 100.00 used` |
-| ≥ 10 DIEM | < 10 DIEM | 4 — `91.2345 / 100.0000 used` |
-| < 10 DIEM | any | 4 — `0.4375 / 4.9615 used` |
-| any | < 1 DIEM | 6 — `4.960500 / 4.961500 used` |
-| < 1 DIEM | any | 6 |
+| Exhausted (balance = 0) | 2, all red | `DIEM 4.96/4.96 used` |
+| allocation or remaining ≥ 1000 | 0 | `DIEM 1200/5000 used` |
+| allocation or remaining ≥ 100 | 1 | `DIEM 123.4/500.0 used` |
+| allocation or remaining ≥ 10 | 2 | `DIEM 8.12/10.00 used` |
+| allocation or remaining < 10 (≥ 1) | 3 | `DIEM 0.812/4.961 used` |
+| allocation or remaining < 1 | 4 | `DIEM 0.4375/0.9615 used` |
 
-USD shows 4 decimal places when below $1 (`$0.1426 USD`).
+USD always shows 2 decimal places (`$1.23 USD`). When USD or DIEM balance rounds to zero, that value turns red.
 
 ```bash
 export VENICE_ADMIN_API_KEY="your-venice-admin-key"
