@@ -257,6 +257,60 @@ export function registerVeniceStatsCommands(
     },
   });
 
+  pi.registerCommand("venice-stats-chart-period", {
+    description: "Show or set the price sparkline period (1h, 24h, 7d, 30d, default 24h): /venice-stats-chart-period [period|reset]",
+    handler: async (args, ctx) => {
+      const raw = (args ?? "").trim().toLowerCase();
+      const valid = ["1h", "24h", "7d", "30d"] as const;
+      const current = getConfig().chartPeriod ?? "24h";
+
+      if (!raw) {
+        const source = getConfig().chartPeriod ? "(configured)" : "(default)";
+        notify(ctx, `Chart period: ${current} ${source}\nValid: ${valid.join(", ")}`, "info");
+        return;
+      }
+      if (raw === "reset") {
+        const { chartPeriod: _, ...rest } = getConfig();
+        save(ctx, rest);
+        notify(ctx, `Chart period reset to default (24h).`, "success");
+        return;
+      }
+      if (!valid.includes(raw as any)) {
+        notify(ctx, `Invalid period "${raw}". Use one of: ${valid.join(", ")}`, "error");
+        return;
+      }
+      save(ctx, { ...getConfig(), chartPeriod: raw as typeof valid[number] });
+      notify(ctx, `Chart period set to ${raw} (was ${current}). Takes effect on the next tick.`, "success");
+    },
+  });
+
+  pi.registerCommand("venice-stats-exposure-period", {
+    description: "Show or set the wallet exposure sparkline period (1h, 24h, 7d, 30d, default 30d): /venice-stats-exposure-period [period|reset]",
+    handler: async (args, ctx) => {
+      const raw = (args ?? "").trim().toLowerCase();
+      const valid = ["1h", "24h", "7d", "30d"] as const;
+      const current = getConfig().exposurePeriod ?? "30d";
+
+      if (!raw) {
+        const source = getConfig().exposurePeriod ? "(configured)" : "(default)";
+        notify(ctx, `Exposure period: ${current} ${source}\nValid: ${valid.join(", ")}`, "info");
+        return;
+      }
+      if (raw === "reset") {
+        const { exposurePeriod: _, ...rest } = getConfig();
+        save(ctx, rest);
+        notify(ctx, `Exposure period reset to default (1d).`, "success");
+        return;
+      }
+      if (!valid.includes(raw as any)) {
+        notify(ctx, `Invalid period "${raw}". Use one of: ${valid.join(", ")}`, "error");
+        return;
+      }
+      save(ctx, { ...getConfig(), exposurePeriod: raw as typeof valid[number] });
+      notify(ctx, `Exposure period set to ${raw} (was ${current}). Takes effect on the next tick.`, "success");
+    },
+  });
+
   pi.registerCommand("venice-stats-widget", {
     description: "Manage the stats widget lock: /venice-stats-widget claim — take over when the previous session is gone",
     handler: async (args, ctx) => {

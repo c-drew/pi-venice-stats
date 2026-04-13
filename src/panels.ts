@@ -51,6 +51,7 @@ export interface WalletData {
   role: string;
   sizeLabel: string;
   svvvBalance: number;
+  vvvBalance: number;
   diemStaked: number;
   pendingRewards: number;
   rank: number;
@@ -102,6 +103,8 @@ export interface WalletExposure {
   currentExposure: number;
   /** Percentage change over the fetched period. */
   changePct: number;
+  /** VVV in cooldown from the latest wallet-history point. */
+  cooldownVvv: number;
 }
 
 export interface AllData {
@@ -485,7 +488,9 @@ export const PANEL_REGISTRY: Record<string, PanelDef> = {
         theme.fg("accent", wallet.label) +
         (wallet.role      ? theme.fg(roleColor, `  ${wallet.role}`)                              : "") +
         (wallet.sizeLabel ? theme.fg("dim",     ` ${wallet.sizeLabel}${emoji ? " " + emoji : ""}`) : "") +
-        (metrics ? sep + theme.fg("dim", "Portfolio ") + theme.fg("text", fmtUSD(wallet.svvvBalance * metrics.vvvPrice)) : "") +
+        (metrics ? sep + theme.fg("dim", "Portfolio ") + theme.fg("text", fmtUSD(
+          (wallet.svvvBalance + wallet.vvvBalance + wallet.pendingRewards) * metrics.vvvPrice
+        )) : "") +
         sep +
         theme.fg("dim", "Rank #")  + theme.fg("text", String(wallet.rank)) +
         theme.fg("dim", `/${fmtK(wallet.totalVenetians)}`);

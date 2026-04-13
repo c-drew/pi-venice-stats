@@ -151,6 +151,8 @@ export function startPriceWidget(
   getTimezone:        () => string,
   getTimeFormat:      () => "24h" | "12h",
   getBillingInterval: () => number,
+  getChartPeriod:     () => "1h" | "24h" | "7d" | "30d",
+  getExposurePeriod:  () => "1h" | "24h" | "7d" | "30d",
 ): WidgetController {
   const controller: WidgetController = {
     triggerBillingRefresh: () => {}, // wired up once the widget factory runs
@@ -286,7 +288,7 @@ export function startPriceWidget(
           wallet = {
             label: d.ensName ?? fmtAddr(d.address ?? addr),
             role: d.roleLabel ?? "", sizeLabel: d.sizeLabel ?? "",
-            svvvBalance: d.svvvBalance ?? 0, diemStaked: d.diemStaked ?? 0,
+            svvvBalance: d.svvvBalance ?? 0, vvvBalance: d.vvvBalance ?? 0, diemStaked: d.diemStaked ?? 0,
             pendingRewards: d.pendingRewards ?? 0,
             rank: d.rank ?? 0, totalVenetians: d.totalVenetians ?? 0,
           };
@@ -347,9 +349,10 @@ export function startPriceWidget(
       async function fetchCharts() {
         if (!getActiveSources(getPanels()).has("charts")) return;
         try {
+          const cp = getChartPeriod();
           const [vvvRes, diemRes, waveRes] = await Promise.all([
-            fetch("https://venicestats.com/api/charts?period=24h&metric=vvvPrice"),
-            fetch("https://venicestats.com/api/charts?period=24h&metric=diemPrice"),
+            fetch(`https://venicestats.com/api/charts?period=${cp}&metric=vvvPrice`),
+            fetch(`https://venicestats.com/api/charts?period=${cp}&metric=diemPrice`),
             fetch("https://venicestats.com/api/charts?period=7d&metric=cooldownWave"),
           ]);
           if (!vvvRes.ok || !diemRes.ok || !waveRes.ok) {
@@ -373,32 +376,46 @@ export function startPriceWidget(
 
       /**
        * Fetch wallet exposure history and build a sparkline + change%.
-       * Accepts granularity ("1h" | "4h" | "1d"). Uses last 20 data points.
-       * Each point's totalExposureUsd = svvvUsd + diemUsd + vvvUsd + cooldownUsd.
+       * Maps user-facing periods to API granularity + point count:
+       *   1h  → granularity=1h,  last 20 pts
+       *   24h → granularity=1h,  last 24 pts
+       *   7d  → granularity=4h,  last 42 pts
+       *   30d → granularity=1d,  last 30 pts
        */
-      async function getExposureSparkline(granularity: "1h" | "4h" | "1d" = "1d"): Promise<WalletExposure | null> {
+      async function getExposureSparkline(period: "1h" | "24h" | "7d" | "30d" = "24h"): Promise<WalletExposure | null> {
+        const periodMap: Record<string, { granularity: string; slice: number }> = {
+          "1h":  { granularity: "1h", slice: 20 },
+          "24h": { granularity: "1h", slice: 24 },
+          "7d":  { granularity: "4h", slice: 42 },
+          "30d": { granularity: "1d", slice: 30 },
+        };
+        const { granularity, slice } = periodMap[period] ?? periodMap["24h"];
         const addr = getWallet();
         if (!addr) return null;
         const url = `https://venicestats.com/api/wallet-history?address=${addr}&granularity=${granularity}`;
         const res = await fetch(url);
         if (!res.ok) return null;
         const d = await res.json() as any;
-        const pts: number[] = (Array.isArray(d.points) ? d.points : [])
+        const rawPts: any[] = Array.isArray(d.points) ? d.points : [];
+        if (rawPts.length === 0) return null;
+        const pts: number[] = rawPts
           .map((p: any) => (p.svvvUsd ?? 0) + (p.diemUsd ?? 0) + (p.vvvUsd ?? 0) + (p.cooldownUsd ?? 0));
-        if (pts.length === 0) return null;
 
-        const tail = pts.slice(-20);
+        const tail = pts.slice(-slice);
+        const sparkW = Math.min(tail.length, 20);
         const first = tail[0];
         const last = tail[tail.length - 1];
         const changePct = first > 0 ? ((last - first) / first) * 100 : 0;
+        const lastPt = rawPts[rawPts.length - 1];
+        const cooldownVvv: number = lastPt?.cooldown ?? 0;
 
-        return { sparkline: sparkline(tail, tail.length), currentExposure: last, changePct };
+        return { sparkline: sparkline(tail, sparkW), currentExposure: last, changePct, cooldownVvv };
       }
 
       async function fetchWalletHistory() {
         if (!getPanels().includes("wallet") || !getWallet()) { walletExposure = null; return; }
         try {
-          walletExposure = await getExposureSparkline("1d");
+          walletExposure = await getExposureSparkline(getExposurePeriod());
           if (walletExposure) plog(`wallet-history ok — $${walletExposure.currentExposure.toFixed(0)} chg=${walletExposure.changePct.toFixed(1)}%`);
         } catch (err) { plog(`wallet-history error: ${err}`); }
         if (!disposed) tui.requestRender();
@@ -543,12 +560,12 @@ export function startPriceWidget(
               theme.fg(vvvColor, `$${metrics.vvvPrice.toFixed(4)}`) +
               (vvvSpark ? " " + vvvSpark : "") +
               theme.fg(vvvChg, ` ${arrow(metrics.priceChange24h)}`) +
-              dim(" 24h");
+              dim(` ${getChartPeriod()}`);
             const diemP = hdr("DIEM ") +
               theme.fg(diemColor, `$${metrics.diemPrice.toFixed(2)}`) +
               (diemSpark ? " " + diemSpark : "") +
               theme.fg(diemChg, ` ${arrow(metrics.diemPriceChange24h)}`) +
-              dim(" 24h");
+              dim(` ${getChartPeriod()}`);
 
             const vvvRank  = social?.marketCapRank     ? dim(" \u00B7 Ranked #") + theme.fg("text", String(social.marketCapRank))     : "";
             const diemRank = social?.diemMarketCapRank ? dim(" \u00B7 Ranked #") + theme.fg("text", String(social.diemMarketCapRank)) : "";
@@ -685,20 +702,27 @@ export function startPriceWidget(
                 (theme as any).fg(roleColor, fmtAddr(addr ?? "")) +
                 (venetianName ? " " + venetianName : "") +
                 (emoji ? " " + emoji : "");
+              const cdVvv = walletExposure?.cooldownVvv ?? 0;
               walletPortLine =
-                dim("Portfolio ") + theme.fg("text", fmtUSD(wallet.svvvBalance * metrics.vvvPrice)) +
+                dim("Portfolio ") + theme.fg("text", fmtUSD(
+                  (wallet.svvvBalance + wallet.vvvBalance + wallet.pendingRewards + cdVvv) * metrics.vvvPrice
+                )) +
                 "   " + dim("Rank #") + theme.fg("text", String(wallet.rank)) +
                 dim(`/${fmtK(wallet.totalVenetians)}`);
               walletSvvvLine =
                 dim("\u23BF sVVV ") + theme.fg("text", fmtNum4(wallet.svvvBalance)) +
                 spc + dim("Pending ") + theme.fg("success", `${wallet.pendingRewards.toFixed(2)} VVV`);
               if (walletExposure) {
+                const cooldownVvv = walletExposure.cooldownVvv;
+                const liveExposure =
+                  (wallet.svvvBalance + wallet.vvvBalance + wallet.pendingRewards + cooldownVvv) * metrics.vvvPrice +
+                  wallet.diemStaked * metrics.diemPrice;
                 const expDir = walletExposure.changePct >= 0 ? "success" : "error";
                 expLine =
                   theme.fg(expDir, walletExposure.sparkline) + "  " +
-                  theme.fg("text", fmtUSD(walletExposure.currentExposure)) +
+                  theme.fg("text", fmtUSD(liveExposure)) +
                   theme.fg(expDir, ` ${arrow(walletExposure.changePct)}`) +
-                  dim(" 7d");
+                  dim(` ${getExposurePeriod()}`);
               }
             } else if (addr) {
               walletAddrLine = dim(`Loading ${fmtAddr(addr)}\u2026`);

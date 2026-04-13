@@ -24,6 +24,8 @@ export default function (pi: ExtensionAPI) {
       () => config.widgetTimezone ?? detectTimezone(),
       () => config.widgetTimeFormat ?? "24h",
       () => config.billingInterval ?? BILLING_INTERVAL_DEFAULT,
+      () => config.chartPeriod ?? "24h",
+      () => config.exposurePeriod ?? "30d",
     );
   };
 
