@@ -22,7 +22,8 @@ export default function (pi: ExtensionAPI) {
       () => config.widgetPanels ?? DEFAULT_PANELS,
       () => config.widgetTimezone ?? detectTimezone(),
       () => config.widgetTimeFormat ?? "24h",
-      () => config.chartPeriod ?? "24h",
+      () => config.tokenPeriod ?? "24h",
+      () => config.cooldownPeriod ?? "7d",
       () => config.exposurePeriod ?? "30d",
     );
   };
