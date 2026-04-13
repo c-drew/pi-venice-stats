@@ -19,8 +19,14 @@ export interface MetricsData {
   vvvPrice: number;
   diemPrice: number;
   ethPrice: number;
+  vvvPriceChange1h: number;
+  vvvPriceChange4h: number;
   priceChange24h: number;
+  vvvPriceChange7d: number;
+  diemPriceChange1h: number;
+  diemPriceChange4h: number;
   diemPriceChange24h: number;
+  diemPriceChange7d: number;
   marketCap: number;
   stakingRatio: number;
   stakerApr: number;
