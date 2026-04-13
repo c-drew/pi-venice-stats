@@ -376,6 +376,7 @@ export function startPriceWidget(
           const diemD = await diemRes.json() as any;
           const waveD = await waveRes.json() as any;
           const newWave = Array.isArray(waveD.data) ? waveD.data.map((p: any) => p.v as number) : [];
+          const prevWave = charts ? charts.cooldownWave : [];
           charts = {
             vvvPrices:      Array.isArray(vvvD.data)  ? vvvD.data.map((p: any)  => p.v as number) : [],
             vvvTimestamps:  Array.isArray(vvvD.data)  ? vvvD.data.map((p: any)  => p.t as number) : [],
@@ -386,7 +387,6 @@ export function startPriceWidget(
           plog(`charts ok — vvv ${charts.vvvPrices.length}pts diem ${charts.diemPrices.length}pts wave ${charts.cooldownWave.length}pts`);
           // Only re-render for cooldown data changes; price changes are handled
           // by setFlash in fetchMetrics so they flash independently
-          const prevWave = charts ? charts.cooldownWave : [];
           const waveChanged =
             prevWave.length !== newWave.length ||
             prevWave.some((v, i) => v !== newWave[i]);
@@ -657,7 +657,7 @@ export function startPriceWidget(
             const staked =
               dim("Staked ") + gauge(metrics.stakingRatio / 100, gw, theme) +
               theme.fg("text", ` ${metrics.stakingRatio.toFixed(1)}%`) +
-              dim(" @ ") + theme.fg("text", `${metrics.stakerApr.toFixed(1)}% APR`);
+              dim(" @ ") + theme.fg("text", `${metrics.stakerApr.toFixed(2)}% APR`);
             const locked =
               dim("Locked ") + gauge(metrics.lockRatio / 100, gw, theme, "syntaxType") +
               theme.fg("text", ` ${metrics.lockRatio.toFixed(1)}%`);
