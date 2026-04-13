@@ -9,6 +9,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 node_modules/.bin/tsc --noEmit
 ```
 
+Before committing, sync `CLAUDE.md` and `README.md` with any command, config, or architecture changes made in the session.
+
 No tests, no bundler. Pi loads `src/index.ts` directly at runtime as an ESM extension.
 
 ## What this package is
@@ -31,10 +33,11 @@ src/state.ts      ← VeniceStatsConfig persistence via pi.appendEntry
 
 ### Polling
 
-A **single 500 ms master ticker** in `widget.ts` drives all data fetches. Two independent scheduling groups share the tick:
+Polling is **health-driven**. A lightweight `/api/health` check fires every ~90 s; each pipeline in the response carries an `ageSec` value. When `ageSec` drops below a per-pipeline stale threshold, the corresponding data fetch fires. This means data is only fetched when venicestats.com has actually updated it — not on a fixed timer.
 
-1. **venicestats.com sources** — budget-driven. `SOURCE_WEIGHTS` (in `panels.ts`) define relative priority; `computeIntervals()` converts the req/min budget into per-source intervals that rebalance whenever the active panel set changes.
-2. **venice.ai `/billing/balance`** — independent fixed interval configured via `/venice-billing-interval`. Uses `VENICE_ADMIN_API_KEY`.
+`STALE_THRESHOLD` in `widget.ts` defines the per-pipeline thresholds (e.g. `prices: 180`, `diem: 300`, `staking: 300`).
+
+The **venice.ai `/billing/balance`** poller is independent: max 1 req/min, also triggered after each agent loop completes. Uses `VENICE_ADMIN_API_KEY`.
 
 ### Panels
 
@@ -54,7 +57,7 @@ Only use named colors from the pi-tui theme: `text`, `dim`, `accent`, `muted`, `
 
 ### State persistence
 
-`VeniceStatsConfig` (wallet address, panel layout, budget, timezone, time format, billing interval) is persisted via `pi.appendEntry("venice-stats-config", config)`. `loadConfig` replays the session log and takes the latest entry. Widget config never touches pi-venice's state.
+`VeniceStatsConfig` (wallet address, panel layout, timezone, time format, token/cooldown/exposure periods) is persisted via `pi.appendEntry("venice-stats-config", config)`. `loadConfig` replays the session log and takes the latest entry. Widget config never touches pi-venice's state.
 
 ### Environment variables
 

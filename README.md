@@ -16,6 +16,13 @@ Or load directly:
 pi -e npm:pi-venice-stats
 ```
 
+Set your API keys before starting Pi:
+
+```bash
+export VENICE_ADMIN_API_KEY="your-venice-admin-key"  # enables billing balance in the clock
+export VENICE_WALLET="0x<your-address>"               # wallet stats (or set via /venice-stats-wallet)
+```
+
 ## Default view
 
 Two-column box-drawing grid — protocol data on the left, system/balance/wallet on the right rail:
@@ -79,29 +86,30 @@ export VENICE_ADMIN_API_KEY="your-venice-admin-key"
 /venice-stats-time format reset
 ```
 
-**Polling rates:**
+**Polling status:**
 
 ```text
-/venice-stats-polling                  ← show budget + billing interval
-/venice-stats-polling budget 10        ← venicestats.com request budget (1–59 req/min, default 30)
-/venice-stats-polling budget reset
-/venice-stats-polling billing 60       ← venice.ai billing poll interval (5–600s, default 60)
-/venice-stats-polling billing reset
+/venice-stats-health                   ← show polling mode + billing status
 ```
 
 **Sparkline periods:**
 
 ```text
-/venice-stats-period                   ← show chart + exposure periods
-/venice-stats-period chart 1h          ← 1-hour sparklines
-/venice-stats-period chart 24h         ← 24-hour (default)
-/venice-stats-period chart 7d          ← 7-day
-/venice-stats-period chart 30d         ← 30-day
-/venice-stats-period chart reset
-/venice-stats-period exposure 1h       ← 1-hour
-/venice-stats-period exposure 24h      ← 24-hour
-/venice-stats-period exposure 7d       ← 7-day
-/venice-stats-period exposure 30d      ← 30-day (default)
+/venice-stats-period                        ← show token + cooldown + exposure periods
+/venice-stats-period reset                  ← reset all periods to defaults
+/venice-stats-period token 1h               ← 1-hour token sparklines (VVV + DIEM)
+/venice-stats-period token 24h              ← 24-hour (default)
+/venice-stats-period token 7d              ← 7-day
+/venice-stats-period token 30d             ← 30-day
+/venice-stats-period token reset
+/venice-stats-period cooldown 24h          ← 24-hour cooldown wave chart
+/venice-stats-period cooldown 7d           ← 7-day (default)
+/venice-stats-period cooldown 30d          ← 30-day
+/venice-stats-period cooldown reset
+/venice-stats-period exposure 1h           ← 1-hour
+/venice-stats-period exposure 24h          ← 24-hour
+/venice-stats-period exposure 7d           ← 7-day
+/venice-stats-period exposure 30d          ← 30-day (default)
 /venice-stats-period exposure reset
 ```
 
@@ -133,7 +141,7 @@ The layout is organized into left-column sections and a right rail. All panels a
 | `markets` | 24H Market | Volume, traders, swaps (with arrow change indicators), buy/sell, net flow, top pool | `/api/markets` |
 | `wallet` | Wallet | Address, venetian name, portfolio (sVVV+VVV+rewards+cooldown), rank, protocol exposure sparkline | `/api/venetians`, `/api/wallet-history` |
 
-**Dynamic rate allocation** — targets a configurable budget (default **30 req/min**, range **1–59**), shared automatically across active data sources. Configure via `/venice-stats-polling budget`.
+**Health-driven polling** — polls `/api/health` every ~90 s and fetches a data source only when its pipeline has actually updated. No fixed request budget; rate is naturally throttled by upstream update frequency.
 
 > **Multi-session warning** — only the first `pi` session to start renders the widget. Others display an info notice and make no requests. If the owning session exited without releasing the lock, run `/venice-stats-widget claim` to take over.
 
