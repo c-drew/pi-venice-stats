@@ -12,7 +12,8 @@
  *   1. Poll /api/health every ~90s — sentinel, ~1 req/min
  *   2. Each pipeline has a stale-threshold; when ageSec drops below it,
  *      the corresponding data fetch fires
- *   3. Billing uses its own fixed interval (unchanged)
+ *   3. Billing balance (venice.ai /billing/balance): 1 req/min max,
+ *      also triggered after each agent loop completes
  */
 
 import { appendFileSync, existsSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
@@ -22,8 +23,6 @@ import type { ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { visibleWidth, truncateToWidth } from "@mariozechner/pi-tui";
 import {
   PANEL_REGISTRY,
-  BILLING_INTERVAL_MIN,
-  BILLING_INTERVAL_MAX,
   ROLE_COLOR,
   SIZE_EMOJI,
   fmtAddr,
@@ -139,9 +138,10 @@ function plog(msg: string) {
 // ---------------------------------------------------------------------------
 
 export interface WidgetController {
-  triggerBillingRefresh(): void;
   triggerChartsRefresh(): void;
   triggerExposureRefresh(): void;
+  /** Force a billing refresh on the next tick (bypasses 1 req/min rate limit). */
+  triggerBillingRefresh(): void;
 }
 
 export function startPriceWidget(
@@ -150,7 +150,6 @@ export function startPriceWidget(
   getPanels:          () => string[],
   getTimezone:        () => string,
   getTimeFormat:      () => "24h" | "12h",
-  getBillingInterval: () => number,
   getChartPeriod:     () => "1h" | "24h" | "7d" | "30d",
   getExposurePeriod:  () => "1h" | "24h" | "7d" | "30d",
 ): WidgetController {
@@ -466,8 +465,7 @@ export function startPriceWidget(
         } catch (err) { plog(`health error: ${err}`); }
       }
 
-      // ── Controller wiring ─────────────────────────────────────────────────
-      controller.triggerBillingRefresh = () => fetchBilling();
+      // Controller wiring
       controller.triggerChartsRefresh = () => {
         charts = null;
         fetchCharts();
@@ -476,16 +474,13 @@ export function startPriceWidget(
         walletExposure = null;
         fetchWalletHistory();
       };
+      // Force billing refresh now (bypasses 60s rate limit) — called after agent_end
+      controller.triggerBillingRefresh = () => fetchBilling();
 
-      function clampBillingMs(): number {
-        return Math.max(
-          BILLING_INTERVAL_MIN * 1000,
-          Math.min(BILLING_INTERVAL_MAX * 1000, getBillingInterval() * 1000),
-        );
-      }
+      // Billing: 1 req/min max (also triggered on agent_end)
+      let billingLastHit = Date.now();
 
-      // Initial fetch: get a baseline health snapshot, then fetch all data
-      // once so the widget isn't empty on startup.
+      // Initial fetch so the widget isn't empty on startup
       plog("health/metrics init");
       fetchHealth();
       fetchMetrics();
@@ -495,7 +490,6 @@ export function startPriceWidget(
       if (getPanels().includes("markets")) fetchMarkets();
       fetchBilling();
       let lastHealthFetch = Date.now();
-      let lastBillingFetch = Date.now();
 
       const ticker = setInterval(() => {
         if (disposed) return;
@@ -507,10 +501,9 @@ export function startPriceWidget(
           fetchHealth();
         }
 
-        // Billing (unchanged)
-        const billingDue = now - lastBillingFetch >= clampBillingMs();
-        if (billingDue) {
-          lastBillingFetch = now;
+        // Billing: 1 req/min max (also triggered on agent_end)
+        if (now - billingLastHit >= 60_000) {
+          billingLastHit = now;
           fetchBilling();
         }
       }, TICK_MS);
@@ -836,7 +829,6 @@ export function startPriceWidget(
         dispose() {
           plog("dispose() called");
           disposed = true;
-          controller.triggerBillingRefresh = () => {};
           controller.triggerChartsRefresh = () => {};
           controller.triggerExposureRefresh = () => {};
           clearInterval(ticker);
