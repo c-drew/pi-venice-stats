@@ -381,7 +381,8 @@ export function startPriceWidget(
             vvvTimestamps:  Array.isArray(vvvD.data)  ? vvvD.data.map((p: any)  => p.t as number) : [],
             diemPrices:     Array.isArray(diemD.data) ? diemD.data.map((p: any) => p.v as number) : [],
             diemTimestamps: Array.isArray(diemD.data) ? diemD.data.map((p: any) => p.t as number) : [],
-            cooldownWave: charts?.cooldownWave ?? [],
+            // Preserve existing cooldown wave data across token chart re-fetches
+            cooldownWave: charts ? charts.cooldownWave : [],
           };
           plog(`token charts ok — vvv ${charts.vvvPrices.length}pts diem ${charts.diemPrices.length}pts`);
           if (!disposed) tui.requestRender();
@@ -403,7 +404,11 @@ export function startPriceWidget(
           const waveChanged =
             prevWave.length !== newWave.length ||
             prevWave.some((v, i) => v !== newWave[i]);
-          if (charts) charts.cooldownWave = newWave;
+          if (charts) {
+            charts.cooldownWave = newWave;
+          } else {
+            charts = { vvvPrices: [], vvvTimestamps: [], diemPrices: [], diemTimestamps: [], cooldownWave: newWave };
+          }
           plog(`cooldown chart ok — wave ${newWave.length}pts`);
           if (waveChanged && !disposed) tui.requestRender();
         } catch (err) { plog(`cooldown error: ${err}`); }
@@ -489,7 +494,13 @@ export function startPriceWidget(
 
       // Controller wiring
       controller.triggerTokenRefresh = () => {
-        charts = null;
+        charts = {
+          vvvPrices:      [],
+          vvvTimestamps: [],
+          diemPrices:    [],
+          diemTimestamps:[],
+          cooldownWave:  charts?.cooldownWave ?? [],
+        };
         fetchTokenCharts();
       };
       controller.triggerCooldownRefresh = () => {
