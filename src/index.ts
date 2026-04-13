@@ -29,7 +29,7 @@ export default function (pi: ExtensionAPI) {
     );
   };
 
-  registerVeniceStatsCommands(pi, getConfig, setConfig, startWidget);
+  registerVeniceStatsCommands(pi, getConfig, setConfig, startWidget, () => widgetController);
 
   pi.on("session_start", async (_event, ctx) => {
     config = loadConfig(ctx);

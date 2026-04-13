@@ -68,35 +68,41 @@ USD shows 4 decimal places when below $1 (`$0.1426 USD`).
 export VENICE_ADMIN_API_KEY="your-venice-admin-key"
 ```
 
-**Time / timezone commands:**
+**Time settings:**
 
 ```text
-/venice-stats-tz                       ← show current (auto-detected)
-/venice-stats-tz America/New_York      ← set IANA timezone
-/venice-stats-tz reset                 ← restore auto-detection
-/venice-stats-time-format 12h          ← 12-hour time (default is 24h)
-/venice-stats-time-format 24h
-/venice-stats-time-format reset
-/venice-stats-billing-interval         ← show current (default 30s, range 5–600s)
-/venice-stats-billing-interval 60      ← set new interval (takes effect on next tick)
-/venice-stats-billing-interval reset
+/venice-stats-time                           ← show timezone + format
+/venice-stats-time timezone America/New_York ← set IANA timezone
+/venice-stats-time timezone reset            ← restore auto-detection
+/venice-stats-time format 12h               ← 12-hour time (default is 24h)
+/venice-stats-time format 24h
+/venice-stats-time format reset
 ```
 
-**Chart period commands:**
+**Polling rates:**
 
 ```text
-/venice-stats-chart-period             ← show current (default 24h)
-/venice-stats-chart-period 1h          ← 1-hour sparklines
-/venice-stats-chart-period 24h         ← 24-hour (default)
-/venice-stats-chart-period 7d          ← 7-day
-/venice-stats-chart-period 30d         ← 30-day
-/venice-stats-chart-period reset
-/venice-stats-exposure-period          ← show current (default 30d)
-/venice-stats-exposure-period 1h       ← 1-hour
-/venice-stats-exposure-period 24h      ← 24-hour
-/venice-stats-exposure-period 7d       ← 7-day
-/venice-stats-exposure-period 30d      ← 30-day (default)
-/venice-stats-exposure-period reset
+/venice-stats-polling                  ← show budget + billing interval
+/venice-stats-polling budget 10        ← venicestats.com request budget (1–59 req/min, default 30)
+/venice-stats-polling budget reset
+/venice-stats-polling billing 60       ← venice.ai billing poll interval (5–600s, default 60)
+/venice-stats-polling billing reset
+```
+
+**Sparkline periods:**
+
+```text
+/venice-stats-period                   ← show chart + exposure periods
+/venice-stats-period chart 1h          ← 1-hour sparklines
+/venice-stats-period chart 24h         ← 24-hour (default)
+/venice-stats-period chart 7d          ← 7-day
+/venice-stats-period chart 30d         ← 30-day
+/venice-stats-period chart reset
+/venice-stats-period exposure 1h       ← 1-hour
+/venice-stats-period exposure 24h      ← 24-hour
+/venice-stats-period exposure 7d       ← 7-day
+/venice-stats-period exposure 30d      ← 30-day (default)
+/venice-stats-period exposure reset
 ```
 
 ## Tracking your wallet
@@ -115,24 +121,9 @@ Or set from inside the TUI (persisted across sessions):
 
 ## Dashboard panels
 
-The layout is organized into left-column sections and a right rail. Panels can be toggled individually.
+The layout is organized into left-column sections and a right rail. All panels are always active.
 
-**List all panels:**
-```text
-/venice-stats-panels
-```
-
-**Add / remove / reorder:**
-```text
-/venice-stats-panel add <id>
-/venice-stats-panel add all      ← enable every available panel
-/venice-stats-panel remove <id>
-/venice-stats-panel move <id> up
-/venice-stats-panel move <id> down
-/venice-stats-panel reset        ← restore defaults: prices, staking, diem, markets, wallet
-```
-
-**Available panels:**
+**Panels:**
 
 | id | Label | What it shows | Data source |
 |----|-------|---------------|-------------|
@@ -142,15 +133,7 @@ The layout is organized into left-column sections and a right rail. Panels can b
 | `markets` | 24H Market | Volume, traders, swaps (with arrow change indicators), buy/sell, net flow, top pool | `/api/markets` |
 | `wallet` | Wallet | Address, venetian name, portfolio (sVVV+VVV+rewards+cooldown), rank, protocol exposure sparkline | `/api/venetians`, `/api/wallet-history` |
 
-**Dynamic rate allocation** — targets a configurable budget (default **30 req/min**, range **1–59**), shared automatically across active data sources.
-
-```text
-/venice-stats-budget          ← show current budget
-/venice-stats-budget 10       ← low-bandwidth mode
-/venice-stats-budget 30       ← default
-/venice-stats-budget 59       ← near-maximum
-/venice-stats-budget reset    ← restore default (30)
-```
+**Dynamic rate allocation** — targets a configurable budget (default **30 req/min**, range **1–59**), shared automatically across active data sources. Configure via `/venice-stats-polling budget`.
 
 > **Multi-session warning** — only the first `pi` session to start renders the widget. Others display an info notice and make no requests. If the owning session exited without releasing the lock, run `/venice-stats-widget claim` to take over.
 
