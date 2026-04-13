@@ -138,7 +138,8 @@ function plog(msg: string) {
 // ---------------------------------------------------------------------------
 
 export interface WidgetController {
-  triggerChartsRefresh(): void;
+  triggerTokenRefresh(): void;
+  triggerCooldownRefresh(): void;
   triggerExposureRefresh(): void;
   /** Force a billing refresh on the next tick (bypasses 1 req/min rate limit). */
   triggerBillingRefresh(): void;
@@ -150,13 +151,15 @@ export function startPriceWidget(
   getPanels:          () => string[],
   getTimezone:        () => string,
   getTimeFormat:      () => "24h" | "12h",
-  getChartPeriod:     () => "1h" | "24h" | "7d" | "30d",
-  getExposurePeriod:  () => "1h" | "24h" | "7d" | "30d",
+  getTokenPeriod:    () => "1h" | "24h" | "7d" | "30d",
+  getCooldownPeriod:  () => "24h" | "7d" | "30d",
+  getExposurePeriod: () => "1h" | "24h" | "7d" | "30d",
 ): WidgetController {
   const controller: WidgetController = {
-    triggerBillingRefresh: () => {},
-    triggerChartsRefresh: () => {},
-    triggerExposureRefresh: () => {},
+    triggerBillingRefresh:   () => {},
+    triggerTokenRefresh:      () => {},
+    triggerCooldownRefresh:   () => {},
+    triggerExposureRefresh:   () => {},
   };
   plog(`startPriceWidget called — hasUI=${ctx.hasUI}`);
   if (!ctx.hasUI) return controller;
@@ -357,41 +360,53 @@ export function startPriceWidget(
         if (!disposed) tui.requestRender();
       }
 
-      async function fetchCharts() {
+      async function fetchTokenCharts() {
         if (!getPanels().some(id => ["prices", "staking", "diem", "markets"].includes(id))) return;
-        const cp = getChartPeriod();
+        const tp = getTokenPeriod();
         try {
-          const [vvvRes, diemRes, waveRes] = await Promise.all([
-            fetch(`https://venicestats.com/api/charts?period=${cp}&metric=vvvPrice`),
-            fetch(`https://venicestats.com/api/charts?period=${cp}&metric=diemPrice`),
-            fetch("https://venicestats.com/api/charts?period=7d&metric=cooldownWave"),
+          const [vvvRes, diemRes] = await Promise.all([
+            fetch(`https://venicestats.com/api/charts?period=${tp}&metric=vvvPrice`),
+            fetch(`https://venicestats.com/api/charts?period=${tp}&metric=diemPrice`),
           ]);
-          if (!vvvRes.ok || !diemRes.ok || !waveRes.ok) {
+          if (!vvvRes.ok || !diemRes.ok) {
             sourceErrors.set("charts", (sourceErrors.get("charts") ?? 0) + 1);
-            plog(`charts error: ${vvvRes.status} / ${diemRes.status} / ${waveRes.status}`);
+            plog(`charts error: ${vvvRes.status} / ${diemRes.status}`);
             return;
           }
           sourceErrors.set("charts", 0);
           const vvvD  = await vvvRes.json()  as any;
           const diemD = await diemRes.json() as any;
-          const waveD = await waveRes.json() as any;
-          const newWave = Array.isArray(waveD.data) ? waveD.data.map((p: any) => p.v as number) : [];
-          const prevWave = charts ? charts.cooldownWave : [];
           charts = {
             vvvPrices:      Array.isArray(vvvD.data)  ? vvvD.data.map((p: any)  => p.v as number) : [],
             vvvTimestamps:  Array.isArray(vvvD.data)  ? vvvD.data.map((p: any)  => p.t as number) : [],
             diemPrices:     Array.isArray(diemD.data) ? diemD.data.map((p: any) => p.v as number) : [],
             diemTimestamps: Array.isArray(diemD.data) ? diemD.data.map((p: any) => p.t as number) : [],
-            cooldownWave:   newWave,
+            cooldownWave: charts?.cooldownWave ?? [],
           };
-          plog(`charts ok — vvv ${charts.vvvPrices.length}pts diem ${charts.diemPrices.length}pts wave ${charts.cooldownWave.length}pts`);
-          // Only re-render for cooldown data changes; price changes are handled
-          // by setFlash in fetchMetrics so they flash independently
+          plog(`token charts ok — vvv ${charts.vvvPrices.length}pts diem ${charts.diemPrices.length}pts`);
+          if (!disposed) tui.requestRender();
+        } catch (err) { sourceErrors.set("charts", (sourceErrors.get("charts") ?? 0) + 1); plog(`charts error: ${err}`); }
+      }
+
+      async function fetchCooldownChart() {
+        if (!getPanels().some(id => ["staking", "diem"].includes(id))) return;
+        const cp = getCooldownPeriod();
+        try {
+          const waveRes = await fetch(`https://venicestats.com/api/charts?period=${cp}&metric=cooldownWave`);
+          if (!waveRes.ok) {
+            plog(`cooldown error: ${waveRes.status}`);
+            return;
+          }
+          const waveD = await waveRes.json() as any;
+          const newWave = Array.isArray(waveD.data) ? waveD.data.map((p: any) => p.v as number) : [];
+          const prevWave = charts?.cooldownWave ?? [];
           const waveChanged =
             prevWave.length !== newWave.length ||
             prevWave.some((v, i) => v !== newWave[i]);
+          if (charts) charts.cooldownWave = newWave;
+          plog(`cooldown chart ok — wave ${newWave.length}pts`);
           if (waveChanged && !disposed) tui.requestRender();
-        } catch (err) { sourceErrors.set("charts", (sourceErrors.get("charts") ?? 0) + 1); plog(`charts error: ${err}`); }
+        } catch (err) { plog(`cooldown error: ${err}`); }
       }
 
       async function getExposureSparkline(period: "1h" | "24h" | "7d" | "30d" = "24h"): Promise<WalletExposure | null> {
@@ -455,12 +470,12 @@ export function startPriceWidget(
               // Decide which data to refetch based on pipeline
               if (name === "prices") {
                 fetchMetrics();
-                fetchCharts();
+                fetchTokenCharts();
               } else if (name === "diem") {
                 fetchMetrics();
               } else if (name === "staking") {
                 fetchMetrics();
-              } else if (name === "holders" && panels.includes("social")) {
+                fetchCooldownChart();
                 fetchSocial();
               } else if (name === "rewards" && panels.includes("wallet")) {
                 fetchWallet();
@@ -473,9 +488,12 @@ export function startPriceWidget(
       }
 
       // Controller wiring
-      controller.triggerChartsRefresh = () => {
+      controller.triggerTokenRefresh = () => {
         charts = null;
-        fetchCharts();
+        fetchTokenCharts();
+      };
+      controller.triggerCooldownRefresh = () => {
+        fetchCooldownChart();
       };
       controller.triggerExposureRefresh = () => {
         walletExposure = null;
@@ -491,7 +509,8 @@ export function startPriceWidget(
       plog("health/metrics init");
       fetchHealth();
       fetchMetrics();
-      fetchCharts();
+      fetchTokenCharts();
+      fetchCooldownChart();
       if (getPanels().includes("wallet")) fetchWallet();
       if (getPanels().includes("social")) fetchSocial();
       if (getPanels().includes("markets")) fetchMarkets();
@@ -580,11 +599,11 @@ export function startPriceWidget(
             const diemColor = diemFlash === "up" ? "success" : diemFlash === "down" ? "error" : "text";
 
             const PERIOD_MS: Record<string, number> = { "1h": 3_600_000, "24h": 86_400_000, "7d": 604_800_000, "30d": 2_592_000_000 };
-            const cp = getChartPeriod();
+            const tp = getTokenPeriod();
 
             function trimToWindow(pts: number[], ts: number[]): number[] {
               if (!pts.length || !ts.length) return pts;
-              const windowMs = PERIOD_MS[cp] ?? 86_400_000;
+              const windowMs = PERIOD_MS[tp] ?? 86_400_000;
               const cutoff = ts[ts.length - 1] - windowMs;
               let idx = 0;
               for (let i = 0; i < ts.length; i++) { if (ts[i] >= cutoff) { idx = i; break; } }
@@ -594,9 +613,11 @@ export function startPriceWidget(
             const vvvSparkPts  = charts ? trimToWindow(charts.vvvPrices,  charts.vvvTimestamps)  : [];
             const diemSparkPts = charts ? trimToWindow(charts.diemPrices, charts.diemTimestamps) : [];
 
+
+
             let vvvChangePct: number;
             let diemChangePct: number;
-            if (cp === "30d") {
+            if (tp === "30d") {
               const vvvFirst = vvvSparkPts[0]  ?? 0;
               const vvvLast  = vvvSparkPts[vvvSparkPts.length - 1]  ?? 0;
               const diemFirst = diemSparkPts[0] ?? 0;
@@ -609,7 +630,7 @@ export function startPriceWidget(
                 "24h": { vvv: "priceChange24h",    diem: "diemPriceChange24h" },
                 "7d":  { vvv: "vvvPriceChange7d",   diem: "diemPriceChange7d" },
               };
-              const pk = PERIOD_KEYS[cp] ?? PERIOD_KEYS["24h"];
+              const pk = PERIOD_KEYS[tp] ?? PERIOD_KEYS["24h"];
               vvvChangePct  = metrics[pk.vvv]  as number;
               diemChangePct = metrics[pk.diem] as number;
             }
@@ -627,12 +648,12 @@ export function startPriceWidget(
               theme.fg(vvvColor, `$${metrics.vvvPrice.toFixed(4)}`) +
               (vvvSpark ? " " + vvvSpark : "") +
               theme.fg(vvvSparkColor, ` ${arrow(vvvChangePct)}`) +
-              dim(` ${cp}`);
+              dim(` ${tp}`);
             const diemP = hdr("DIEM ") +
               theme.fg(diemColor, `$${metrics.diemPrice.toFixed(2)}`) +
               (diemSpark ? " " + diemSpark : "") +
               theme.fg(diemSparkColor, ` ${arrow(diemChangePct)}`) +
-              dim(` ${cp}`);
+              dim(` ${tp}`);
 
             const vvvRank  = social?.marketCapRank     ? dim(" \u00B7 Ranked #") + theme.fg("text", String(social.marketCapRank))     : "";
             const diemRank = social?.diemMarketCapRank ? dim(" \u00B7 Ranked #") + theme.fg("text", String(social.diemMarketCapRank)) : "";
@@ -663,6 +684,7 @@ export function startPriceWidget(
               theme.fg("text", ` ${metrics.lockRatio.toFixed(1)}%`);
 
             const wave = charts?.cooldownWave ?? [];
+            const cooldownP = getCooldownPeriod();
             const waveChg = wave.length >= 2
               ? ((wave[wave.length - 1] - wave[0]) / wave[0]) * 100 : 0;
             const waveDir = waveChg <= -2 ? "success" : waveChg >= 2 ? "error" : "text";
@@ -671,7 +693,7 @@ export function startPriceWidget(
             const coolFull =
               dim("Cooldown ") + coolSpark +
               theme.fg("text", fmtK(metrics.cooldownVvv)) +
-              (wave.length >= 2 ? theme.fg(waveDir, ` ${arrow(waveChg)}`) + dim(" 7d") : "");
+              (wave.length >= 2 ? theme.fg(waveDir, ` ${arrow(waveChg)}`) + dim(` ${cooldownP}`) : "");
             const coolShort =
               dim("Cooldown ") + coolSpark + theme.fg("text", fmtK(metrics.cooldownVvv));
 
@@ -836,7 +858,8 @@ export function startPriceWidget(
         dispose() {
           plog("dispose() called");
           disposed = true;
-          controller.triggerChartsRefresh = () => {};
+          controller.triggerTokenRefresh = () => {};
+          controller.triggerCooldownRefresh = () => {};
           controller.triggerExposureRefresh = () => {};
           clearInterval(ticker);
           clearInterval(clockTick);

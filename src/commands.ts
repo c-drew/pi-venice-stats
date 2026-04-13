@@ -68,6 +68,114 @@ export function registerVeniceStatsCommands(
     },
   });
 
+  // Token chart period: VVV + DIEM sparklines
+  pi.registerCommand("venice-stats-token", {
+    description: "Set token chart period: /venice-stats-token <1h|24h|7d|30d|reset>",
+    handler: async (args, ctx) => {
+      const val = (args ?? "").trim().toLowerCase();
+      const validPeriods = ["1h", "24h", "7d", "30d"];
+
+      if (!val) {
+        const current = getConfig().tokenPeriod ?? "24h";
+        const src = getConfig().tokenPeriod ? "(configured)" : "(default)";
+        notify(ctx, `Token chart period: ${current} ${src}\nValid: ${validPeriods.join(", ")}`, "info");
+        return;
+      }
+      if (val === "reset") {
+        const { tokenPeriod: _, ...rest } = getConfig();
+        save(ctx, rest);
+        notify(ctx, "Token chart period reset to default (24h).", "success");
+        getController?.()?.triggerTokenRefresh();
+        return;
+      }
+      if (!validPeriods.includes(val)) {
+        notify(ctx, `Invalid period "${val}". Use one of: ${validPeriods.join(", ")}`, "error");
+        return;
+      }
+      save(ctx, { ...getConfig(), tokenPeriod: val as any });
+      getController?.()?.triggerTokenRefresh();
+      notify(ctx, `Token chart period set to ${val}. Refreshing\u2026`, "success");
+    },
+  });
+
+  // Cooldown wave period: cooldown sparkline in VVV STAKING
+  pi.registerCommand("venice-stats-cooldown", {
+    description: "Set cooldown chart period: /venice-stats-cooldown <24h|7d|30d|reset>",
+    handler: async (args, ctx) => {
+      const val = (args ?? "").trim().toLowerCase();
+      const validPeriods = ["24h", "7d", "30d"];
+
+      if (!val) {
+        const current = getConfig().cooldownPeriod ?? "7d";
+        const src = getConfig().cooldownPeriod ? "(configured)" : "(default)";
+        notify(ctx, `Cooldown period: ${current} ${src}\nValid: ${validPeriods.join(", ")}`, "info");
+        return;
+      }
+      if (val === "reset") {
+        const { cooldownPeriod: _, ...rest } = getConfig();
+        save(ctx, rest);
+        notify(ctx, "Cooldown period reset to default (7d).", "success");
+        getController?.()?.triggerCooldownRefresh();
+        return;
+      }
+      if (!validPeriods.includes(val)) {
+        notify(ctx, `Invalid period "${val}". Use one of: ${validPeriods.join(", ")}`, "error");
+        return;
+      }
+      save(ctx, { ...getConfig(), cooldownPeriod: val as any });
+      getController?.()?.triggerCooldownRefresh();
+      notify(ctx, `Cooldown period set to ${val}. Refreshing\u2026`, "success");
+    },
+  });
+
+  // Exposure period: protocol exposure sparkline
+  pi.registerCommand("venice-stats-exposure", {
+    description: "Set protocol exposure period: /venice-stats-exposure <1h|24h|7d|30d|reset>",
+    handler: async (args, ctx) => {
+      const val = (args ?? "").trim().toLowerCase();
+      const validPeriods = ["1h", "24h", "7d", "30d"];
+
+      if (!val) {
+        const current = getConfig().exposurePeriod ?? "30d";
+        const src = getConfig().exposurePeriod ? "(configured)" : "(default)";
+        notify(ctx, `Exposure period: ${current} ${src}\nValid: ${validPeriods.join(", ")}`, "info");
+        return;
+      }
+      if (val === "reset") {
+        const { exposurePeriod: _, ...rest } = getConfig();
+        save(ctx, rest);
+        notify(ctx, "Exposure period reset to default (30d).", "success");
+        getController?.()?.triggerExposureRefresh();
+        return;
+      }
+      if (!validPeriods.includes(val)) {
+        notify(ctx, `Invalid period "${val}". Use one of: ${validPeriods.join(", ")}`, "error");
+        return;
+      }
+      save(ctx, { ...getConfig(), exposurePeriod: val as any });
+      getController?.()?.triggerExposureRefresh();
+      notify(ctx, `Exposure period set to ${val}. Refreshing\u2026`, "success");
+    },
+  });
+
+  // Legacy /venice-stats-period (keeps backward compat + shows combined status)
+  pi.registerCommand("venice-stats-period", {
+    description: "Show current sparkline period settings (use /venice-stats-token, /venice-stats-cooldown, /venice-stats-exposure to change)",
+    handler: async (args, ctx) => {
+      const token = getConfig().tokenPeriod ?? "24h";
+      const tokenSrc = getConfig().tokenPeriod ? "(configured)" : "(default)";
+      const cool = getConfig().cooldownPeriod ?? "7d";
+      const coolSrc = getConfig().cooldownPeriod ? "(configured)" : "(default)";
+      const exp = getConfig().exposurePeriod ?? "30d";
+      const expSrc = getConfig().exposurePeriod ? "(configured)" : "(default)";
+      notify(ctx,
+        `Sparkline periods:\n  Token: ${token} ${tokenSrc}\n  Cooldown: ${cool} ${coolSrc}\n  Exposure: ${exp} ${expSrc}\n\n` +
+        `Change with:\n  /venice-stats-token <1h|24h|7d|30d|reset>\n  /venice-stats-cooldown <24h|7d|30d|reset>\n  /venice-stats-exposure <1h|24h|7d|30d|reset>`,
+        "info"
+      );
+    },
+  });
+
   // Combined time command: /venice-stats-time timezone <tz> | format <12h|24h> | reset
   pi.registerCommand("venice-stats-time", {
     description: "Manage time settings: /venice-stats-time timezone <IANA|reset> | format <12h|24h|reset>",
@@ -139,83 +247,6 @@ export function registerVeniceStatsCommands(
 
       notify(ctx,
         `Usage:\n  /venice-stats-time timezone <IANA timezone|reset>\n  /venice-stats-time format <12h|24h|reset>`,
-        "info"
-      );
-    },
-  });
-
-  // Combined period command: /venice-stats-period chart <1h|24h|7d|30d> | exposure <1h|24h|7d|30d> | reset
-  pi.registerCommand("venice-stats-period", {
-    description: "Manage sparkline periods: /venice-stats-period chart <1h|24h|7d|30d|reset> | exposure <1h|24h|7d|30d|reset>",
-    handler: async (args, ctx) => {
-      const parts = (args ?? "").trim().split(/\s+/).filter(Boolean);
-      const sub = parts[0]?.toLowerCase();
-      const val = parts[1]?.toLowerCase();
-      const validPeriods = ["1h", "24h", "7d", "30d"];
-
-      if (!sub) {
-        const chart = getConfig().chartPeriod ?? "24h";
-        const chartSrc = getConfig().chartPeriod ? "(configured)" : "(default)";
-        const exp = getConfig().exposurePeriod ?? "30d";
-        const expSrc = getConfig().exposurePeriod ? "(configured)" : "(default)";
-        notify(ctx,
-          `Sparkline periods:\n  Chart: ${chart} ${chartSrc}\n  Exposure: ${exp} ${expSrc}\n\n` +
-          `Usage:\n  /venice-stats-period chart <1h|24h|7d|30d|reset>\n  /venice-stats-period exposure <1h|24h|7d|30d|reset>`,
-          "info"
-        );
-        return;
-      }
-
-      if (sub === "chart") {
-        const current = getConfig().chartPeriod ?? "24h";
-        if (!val) {
-          const src = getConfig().chartPeriod ? "(configured)" : "(default)";
-          notify(ctx, `Chart period: ${current} ${src}\nValid: ${validPeriods.join(", ")}`, "info");
-          return;
-        }
-        if (val === "reset") {
-          const { chartPeriod: _, ...rest } = getConfig();
-          save(ctx, rest);
-          notify(ctx, `Chart period reset to default (24h).`, "success");
-          getController?.()?.triggerChartsRefresh();
-          return;
-        }
-        if (!validPeriods.includes(val)) {
-          notify(ctx, `Invalid period "${val}". Use one of: ${validPeriods.join(", ")}`, "error");
-          return;
-        }
-        save(ctx, { ...getConfig(), chartPeriod: val as any });
-        getController?.()?.triggerChartsRefresh();
-        notify(ctx, `Chart period set to ${val} (was ${current}). Refreshing\u2026`, "success");
-        return;
-      }
-
-      if (sub === "exposure" || sub === "exp") {
-        const current = getConfig().exposurePeriod ?? "30d";
-        if (!val) {
-          const src = getConfig().exposurePeriod ? "(configured)" : "(default)";
-          notify(ctx, `Exposure period: ${current} ${src}\nValid: ${validPeriods.join(", ")}`, "info");
-          return;
-        }
-        if (val === "reset") {
-          const { exposurePeriod: _, ...rest } = getConfig();
-          save(ctx, rest);
-          notify(ctx, `Exposure period reset to default (30d).`, "success");
-          getController?.()?.triggerExposureRefresh();
-          return;
-        }
-        if (!validPeriods.includes(val)) {
-          notify(ctx, `Invalid period "${val}". Use one of: ${validPeriods.join(", ")}`, "error");
-          return;
-        }
-        save(ctx, { ...getConfig(), exposurePeriod: val as any });
-        getController?.()?.triggerExposureRefresh();
-        notify(ctx, `Exposure period set to ${val} (was ${current}). Refreshing\u2026`, "success");
-        return;
-      }
-
-      notify(ctx,
-        `Usage:\n  /venice-stats-period chart <1h|24h|7d|30d|reset>\n  /venice-stats-period exposure <1h|24h|7d|30d|reset>`,
         "info"
       );
     },
