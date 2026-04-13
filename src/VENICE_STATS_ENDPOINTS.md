@@ -11,7 +11,9 @@
 
 ### GET `/api/metrics`
 
-60+ protocol KPIs updated every ~60s. Single flat object.
+60+ protocol KPIs. Prices (VVV/DIEM) change roughly every ~150s.
+Polling more frequently than ~2 min yields mostly stale data.
+See `/api/health` for real-time pipeline freshness checks.
 
 #### VVV Price & Market
 
@@ -164,16 +166,43 @@ Time-series data with up to 200 points per series (LTTB downsampled).
 
 ### GET `/api/health`
 
-System health dashboard.
+System health dashboard with per-pipeline update timestamps.
+`pipelines[].ageSec` decreases whenever a pipeline refreshes — use this
+to poll efficiently instead of hammering `/api/metrics`.
+
+**Observed update frequencies** (15+ min of polling at 30s intervals):
+
+| Pipeline | Avg interval | Notes |
+|----------|-------------|-------|
+| `prices` | ~150s | VVV/DIEM prices |
+| `diem` | ~260s | DIEM tokenomics |
+| `staking` | ~270s | Staking ratios |
+| `holders` | ~570s | Leaderboard |
+| `burns` | ~570s | Burn events |
+| `diemEvents` | ~570s | Mint/burn/stake events |
+| `rewards` | ~570s | Reward accrual |
+| `stakingEvents` | ~570s | Stake/unstake events |
+| `treasury` | ~20min+ | Treasury data |
+| `vesting` | ~4.7h+ | Vesting schedule |
+
+**Pipeline object fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Pipeline name |
+| `status` | string | Pipeline status |
+| `lastUpdate` | string | ISO timestamp of last refresh |
+| `ageSec` | number | Seconds since last update (0 = just updated) |
+
+**Top-level fields:**
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `status` | string | `"healthy"` or error state |
 | `timestamp` | string | Current server time |
 | `workers` | object | `{env, pid, uptimeSec, workers}` |
-| `pipelines[]` | array | `{name, status, lastUpdate, ageSec}` per pipeline |
 | `stats` | object | `{events, prices, snapshots, wallets, trackingSince}` |
-| `rpc` | object | RPC usage: `{last24h, prev24h, today, thisHour, hourly, hourlyDate, month, limit, availableDays, byMethod}` |
+| `rpc` | object | RPC usage metrics |
 | `portraits` | object | Portrait generation: `{done, pending, failed}` |
 
 ---

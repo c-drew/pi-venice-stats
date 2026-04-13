@@ -20,7 +20,6 @@ export default function (pi: ExtensionAPI) {
       ctx,
       () => config.walletAddress ?? process.env["VENICE_WALLET"],
       () => config.widgetPanels ?? DEFAULT_PANELS,
-      () => config.widgetBudget ?? 30,
       () => config.widgetTimezone ?? detectTimezone(),
       () => config.widgetTimeFormat ?? "24h",
       () => config.billingInterval ?? BILLING_INTERVAL_DEFAULT,
