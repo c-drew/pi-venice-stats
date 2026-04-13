@@ -257,7 +257,14 @@ export function startPriceWidget(
           if (metrics && d.diemPrice !== metrics.diemPrice) setFlash("diem", d.diemPrice > metrics.diemPrice ? "up" : "down");
           metrics = {
             vvvPrice: d.vvvPrice, diemPrice: d.diemPrice, ethPrice: d.ethPrice ?? 0,
-            priceChange24h: d.priceChange24h ?? 0, diemPriceChange24h: d.diemPriceChange24h ?? 0,
+            vvvPriceChange1h: d.vvvPriceChange1h ?? 0,
+            vvvPriceChange4h: d.vvvPriceChange4h ?? 0,
+            priceChange24h: d.priceChange24h ?? 0,
+            vvvPriceChange7d: d.vvvPriceChange7d ?? 0,
+            diemPriceChange1h: d.diemPriceChange1h ?? 0,
+            diemPriceChange4h: d.diemPriceChange4h ?? 0,
+            diemPriceChange24h: d.diemPriceChange24h ?? 0,
+            diemPriceChange7d: d.diemPriceChange7d ?? 0,
             marketCap: d.marketCap ?? 0, stakingRatio: (d.stakingRatio ?? 0) * 100,
             stakerApr: d.stakerApr ?? 0, lockRatio: (d.lockRatio ?? 0) * 100,
             totalVvvStaked: d.totalStaked ?? 0,
@@ -562,20 +569,39 @@ export function startPriceWidget(
             const vvvColor  = vvvFlash  === "up" ? "success" : vvvFlash  === "down" ? "error" : "text";
             const diemColor = diemFlash === "up" ? "success" : diemFlash === "down" ? "error" : "text";
 
-            // Compute period change from chart data within the requested window
+            // Map chart period → API metric keys (native values from /api/metrics)
+            // 30d is not in the API, so it falls back to chart-based computation.
             const PERIOD_MS: Record<string, number> = { "1h": 3_600_000, "24h": 86_400_000, "7d": 604_800_000, "30d": 2_592_000_000 };
-            const chartChg = (pts: number[] | undefined, ts: number[] | undefined, fallback: number): number => {
-              if (!pts || !ts || pts.length < 2) return fallback;
-              const windowMs = PERIOD_MS[getChartPeriod()] ?? 86_400_000;
+            const PERIOD_KEYS: Record<string, { vvv: keyof MetricsData; diem: keyof MetricsData }> = {
+              "1h":  { vvv: "vvvPriceChange1h",  diem: "diemPriceChange1h" },
+              "24h": { vvv: "priceChange24h",    diem: "diemPriceChange24h" },
+              "7d":  { vvv: "vvvPriceChange7d",   diem: "diemPriceChange7d" },
+              "30d": { vvv: "priceChange24h",     diem: "diemPriceChange24h" }, // placeholder — computed from chart below
+            };
+
+            // Chart-based % change for periods not in the API (30d)
+            const chartChg = (pts: number[] | undefined, ts: number[] | undefined): number | null => {
+              if (!pts || !ts || pts.length < 2) return null;
+              const cp = getChartPeriod();
+              const windowMs = PERIOD_MS[cp] ?? 86_400_000;
               const cutoff = ts[ts.length - 1] - windowMs;
-              // Find first point at or after cutoff
               let idx = 0;
               for (let i = 0; i < ts.length; i++) { if (ts[i] >= cutoff) { idx = i; break; } }
               const first = pts[idx], last = pts[pts.length - 1];
               return first > 0 ? ((last - first) / first) * 100 : 0;
             };
-            const vvvChangePct  = chartChg(charts?.vvvPrices,  charts?.vvvTimestamps,  metrics.priceChange24h);
-            const diemChangePct = chartChg(charts?.diemPrices, charts?.diemTimestamps, metrics.diemPriceChange24h);
+
+            const cp = getChartPeriod();
+            let vvvChangePct: number;
+            let diemChangePct: number;
+            if (cp === "30d") {
+              vvvChangePct  = chartChg(charts?.vvvPrices,  charts?.vvvTimestamps)  ?? metrics.priceChange24h;
+              diemChangePct = chartChg(charts?.diemPrices, charts?.diemTimestamps) ?? metrics.diemPriceChange24h;
+            } else {
+              const periodKeys = PERIOD_KEYS[cp] ?? PERIOD_KEYS["24h"];
+              vvvChangePct  = metrics[periodKeys.vvv]  as number;
+              diemChangePct = metrics[periodKeys.diem] as number;
+            }
             const vvvChg    = vvvChangePct  >= 0 ? "success" : "error";
             const diemChg   = diemChangePct >= 0 ? "success" : "error";
 
