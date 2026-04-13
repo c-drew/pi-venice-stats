@@ -657,7 +657,7 @@ export function startPriceWidget(
             const staked =
               dim("Staked ") + gauge(metrics.stakingRatio / 100, gw, theme) +
               theme.fg("text", ` ${metrics.stakingRatio.toFixed(1)}%`) +
-              dim(" @ ") + theme.fg("text", `${metrics.stakerApr.toFixed(2)}% APR`);
+              dim(" @ ") + theme.fg("text", `${metrics.stakerApr.toFixed(1)}% APR`);
             const locked =
               dim("Locked ") + gauge(metrics.lockRatio / 100, gw, theme, "syntaxType") +
               theme.fg("text", ` ${metrics.lockRatio.toFixed(1)}%`);
