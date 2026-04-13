@@ -375,16 +375,23 @@ export function startPriceWidget(
           const vvvD  = await vvvRes.json()  as any;
           const diemD = await diemRes.json() as any;
           const waveD = await waveRes.json() as any;
+          const newWave = Array.isArray(waveD.data) ? waveD.data.map((p: any) => p.v as number) : [];
           charts = {
             vvvPrices:      Array.isArray(vvvD.data)  ? vvvD.data.map((p: any)  => p.v as number) : [],
             vvvTimestamps:  Array.isArray(vvvD.data)  ? vvvD.data.map((p: any)  => p.t as number) : [],
             diemPrices:     Array.isArray(diemD.data) ? diemD.data.map((p: any) => p.v as number) : [],
             diemTimestamps: Array.isArray(diemD.data) ? diemD.data.map((p: any) => p.t as number) : [],
-            cooldownWave:   Array.isArray(waveD.data) ? waveD.data.map((p: any) => p.v as number) : [],
+            cooldownWave:   newWave,
           };
           plog(`charts ok — vvv ${charts.vvvPrices.length}pts diem ${charts.diemPrices.length}pts wave ${charts.cooldownWave.length}pts`);
+          // Only re-render for cooldown data changes; price changes are handled
+          // by setFlash in fetchMetrics so they flash independently
+          const prevWave = charts ? charts.cooldownWave : [];
+          const waveChanged =
+            prevWave.length !== newWave.length ||
+            prevWave.some((v, i) => v !== newWave[i]);
+          if (waveChanged && !disposed) tui.requestRender();
         } catch (err) { sourceErrors.set("charts", (sourceErrors.get("charts") ?? 0) + 1); plog(`charts error: ${err}`); }
-        if (!disposed) tui.requestRender();
       }
 
       async function getExposureSparkline(period: "1h" | "24h" | "7d" | "30d" = "24h"): Promise<WalletExposure | null> {
