@@ -141,6 +141,10 @@ export interface WidgetController {
   /** Trigger an out-of-schedule billing refresh. Call after an agent response
    * so the balance updates promptly rather than waiting for the next interval. */
   triggerBillingRefresh(): void;
+  /** Trigger an immediate charts re-fetch (e.g. after chart period change). */
+  triggerChartsRefresh(): void;
+  /** Trigger an immediate wallet-history re-fetch (e.g. after exposure period change). */
+  triggerExposureRefresh(): void;
 }
 
 export function startPriceWidget(
@@ -155,7 +159,9 @@ export function startPriceWidget(
   getExposurePeriod:  () => "1h" | "24h" | "7d" | "30d",
 ): WidgetController {
   const controller: WidgetController = {
-    triggerBillingRefresh: () => {}, // wired up once the widget factory runs
+    triggerBillingRefresh: () => {},  // wired up once the widget factory runs
+    triggerChartsRefresh: () => {},  // wired up once the widget factory runs
+    triggerExposureRefresh: () => {},
   };
   plog(`startPriceWidget called — hasUI=${ctx.hasUI}`);
   if (!ctx.hasUI) return controller;
@@ -365,9 +371,11 @@ export function startPriceWidget(
           const diemD = await diemRes.json() as any;
           const waveD = await waveRes.json() as any;
           charts = {
-            vvvPrices:    Array.isArray(vvvD.data)  ? vvvD.data.map((p: any)  => p.v as number) : [],
-            diemPrices:   Array.isArray(diemD.data) ? diemD.data.map((p: any) => p.v as number) : [],
-            cooldownWave: Array.isArray(waveD.data) ? waveD.data.map((p: any) => p.v as number) : [],
+            vvvPrices:      Array.isArray(vvvD.data)  ? vvvD.data.map((p: any)  => p.v as number) : [],
+            vvvTimestamps:  Array.isArray(vvvD.data)  ? vvvD.data.map((p: any)  => p.t as number) : [],
+            diemPrices:     Array.isArray(diemD.data) ? diemD.data.map((p: any) => p.v as number) : [],
+            diemTimestamps: Array.isArray(diemD.data) ? diemD.data.map((p: any) => p.t as number) : [],
+            cooldownWave:   Array.isArray(waveD.data) ? waveD.data.map((p: any) => p.v as number) : [],
           };
           plog(`charts ok — vvv ${charts.vvvPrices.length}pts diem ${charts.diemPrices.length}pts wave ${charts.cooldownWave.length}pts`);
         } catch (err) { sourceErrors.set("charts", (sourceErrors.get("charts") ?? 0) + 1); plog(`charts error: ${err}`); }
@@ -435,6 +443,14 @@ export function startPriceWidget(
       // Wire the controller so agent_end can trigger an early billing refresh
       controller.triggerBillingRefresh = () => {
         lastFetch.set("billing", 0);
+      };
+      controller.triggerChartsRefresh = () => {
+        charts = null;
+        lastFetch.set("charts", 0);
+      };
+      controller.triggerExposureRefresh = () => {
+        walletExposure = null;
+        lastFetch.set("wallet", 0);
       };
 
       function clampBillingMs(): number {
@@ -545,26 +561,52 @@ export function startPriceWidget(
           if (metrics) {
             const vvvColor  = vvvFlash  === "up" ? "success" : vvvFlash  === "down" ? "error" : "text";
             const diemColor = diemFlash === "up" ? "success" : diemFlash === "down" ? "error" : "text";
-            const vvvChg    = metrics.priceChange24h     >= 0 ? "success" : "error";
-            const diemChg   = metrics.diemPriceChange24h >= 0 ? "success" : "error";
 
+            // Compute period change from chart data within the requested window
+            const PERIOD_MS: Record<string, number> = { "1h": 3_600_000, "24h": 86_400_000, "7d": 604_800_000, "30d": 2_592_000_000 };
+            const chartChg = (pts: number[] | undefined, ts: number[] | undefined, fallback: number): number => {
+              if (!pts || !ts || pts.length < 2) return fallback;
+              const windowMs = PERIOD_MS[getChartPeriod()] ?? 86_400_000;
+              const cutoff = ts[ts.length - 1] - windowMs;
+              // Find first point at or after cutoff
+              let idx = 0;
+              for (let i = 0; i < ts.length; i++) { if (ts[i] >= cutoff) { idx = i; break; } }
+              const first = pts[idx], last = pts[pts.length - 1];
+              return first > 0 ? ((last - first) / first) * 100 : 0;
+            };
+            const vvvChangePct  = chartChg(charts?.vvvPrices,  charts?.vvvTimestamps,  metrics.priceChange24h);
+            const diemChangePct = chartChg(charts?.diemPrices, charts?.diemTimestamps, metrics.diemPriceChange24h);
+            const vvvChg    = vvvChangePct  >= 0 ? "success" : "error";
+            const diemChg   = diemChangePct >= 0 ? "success" : "error";
+
+            // Trim chart data to the requested time window for sparklines
+            const trimToWindow = (pts: number[], ts: number[]): number[] => {
+              if (!pts.length || !ts.length) return pts;
+              const windowMs = PERIOD_MS[getChartPeriod()] ?? 86_400_000;
+              const cutoff = ts[ts.length - 1] - windowMs;
+              let idx = 0;
+              for (let i = 0; i < ts.length; i++) { if (ts[i] >= cutoff) { idx = i; break; } }
+              return pts.slice(idx);
+            };
             const sparkW = isWide ? 12 : 8;
-            const vvvSpark  = charts?.vvvPrices.length
-              ? theme.fg(vvvChg, sparkline(charts.vvvPrices, sparkW)) : "";
-            const diemSpark = charts?.diemPrices.length
-              ? theme.fg(diemChg, sparkline(charts.diemPrices, sparkW)) : "";
+            const vvvSparkPts  = charts ? trimToWindow(charts.vvvPrices, charts.vvvTimestamps) : [];
+            const diemSparkPts = charts ? trimToWindow(charts.diemPrices, charts.diemTimestamps) : [];
+            const vvvSpark  = vvvSparkPts.length
+              ? theme.fg(vvvChg, sparkline(vvvSparkPts, sparkW)) : "";
+            const diemSpark = diemSparkPts.length
+              ? theme.fg(diemChg, sparkline(diemSparkPts, sparkW)) : "";
             const diemMCap = metrics.diemPrice * metrics.diemSupply;
             const gap = isWide ? "      " : "    ";
 
             const vvvP = hdr("VVV ") +
               theme.fg(vvvColor, `$${metrics.vvvPrice.toFixed(4)}`) +
               (vvvSpark ? " " + vvvSpark : "") +
-              theme.fg(vvvChg, ` ${arrow(metrics.priceChange24h)}`) +
+              theme.fg(vvvChg, ` ${arrow(vvvChangePct)}`) +
               dim(` ${getChartPeriod()}`);
             const diemP = hdr("DIEM ") +
               theme.fg(diemColor, `$${metrics.diemPrice.toFixed(2)}`) +
               (diemSpark ? " " + diemSpark : "") +
-              theme.fg(diemChg, ` ${arrow(metrics.diemPriceChange24h)}`) +
+              theme.fg(diemChg, ` ${arrow(diemChangePct)}`) +
               dim(` ${getChartPeriod()}`);
 
             const vvvRank  = social?.marketCapRank     ? dim(" \u00B7 Ranked #") + theme.fg("text", String(social.marketCapRank))     : "";
@@ -719,7 +761,7 @@ export function startPriceWidget(
                   wallet.diemStaked * metrics.diemPrice;
                 const expDir = walletExposure.changePct >= 0 ? "success" : "error";
                 expLine =
-                  theme.fg(expDir, walletExposure.sparkline) + "  " +
+                  theme.fg(expDir, walletExposure.sparkline) + " " +
                   theme.fg("text", fmtUSD(liveExposure)) +
                   theme.fg(expDir, ` ${arrow(walletExposure.changePct)}`) +
                   dim(` ${getExposurePeriod()}`);
@@ -789,6 +831,8 @@ export function startPriceWidget(
           plog("dispose() called");
           disposed = true;
           controller.triggerBillingRefresh = () => {};
+          controller.triggerChartsRefresh = () => {};
+          controller.triggerExposureRefresh = () => {};
           clearInterval(ticker);
           clearInterval(clockTick);
           if (vvvFlashTimer)  clearTimeout(vvvFlashTimer);

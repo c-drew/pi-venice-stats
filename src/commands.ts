@@ -1,6 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
-import { PANEL_REGISTRY, PANEL_IDS, DEFAULT_PANELS, detectTimezone, BILLING_INTERVAL_DEFAULT, BILLING_INTERVAL_MIN, BILLING_INTERVAL_MAX } from "./panels.ts";
+import { detectTimezone, BILLING_INTERVAL_DEFAULT, BILLING_INTERVAL_MIN, BILLING_INTERVAL_MAX } from "./panels.ts";
 import { tryClaimStaleWidgetLock, stopPriceWidget } from "./widget.ts";
+import type { WidgetController } from "./widget.ts";
 import { persistConfig } from "./state.ts";
 import type { VeniceStatsConfig } from "./state.ts";
 
@@ -14,108 +15,12 @@ export function registerVeniceStatsCommands(
   getConfig: () => VeniceStatsConfig,
   setConfig: (next: VeniceStatsConfig) => void,
   startWidget: (ctx: any) => void,
+  getController?: () => WidgetController | null,
 ) {
   const save = (ctx: ExtensionContext, next: VeniceStatsConfig) => {
     setConfig(next);
     persistConfig(pi, next);
   };
-
-  pi.registerCommand("venice-stats-panels", {
-    description: "List all available dashboard panels with their descriptions and enabled status.",
-    handler: async (_args, ctx) => {
-      const enabled = getConfig().widgetPanels ?? DEFAULT_PANELS;
-      const lines = PANEL_IDS.map((id) => {
-        const panel = PANEL_REGISTRY[id];
-        const idx   = enabled.indexOf(id);
-        const status = idx >= 0 ? `[${idx + 1}] enabled` : "disabled";
-        return `${status.padEnd(12)} ${panel.id.padEnd(12)} ${panel.label.padEnd(10)}  ${panel.description}`;
-      });
-      notify(ctx,
-        `Venice dashboard panels\n\nUse /venice-stats-panel add|remove|move|reset to configure.\n\n` +
-        lines.join("\n"),
-        "info"
-      );
-    },
-  });
-
-  pi.registerCommand("venice-stats-panel", {
-    description: "Manage dashboard panels: add <id> | remove <id> | move <id> up|down | reset",
-    handler: async (args, ctx) => {
-      const parts   = (args ?? "").trim().split(/\s+/).filter(Boolean);
-      const action  = parts[0];
-      const current = [...(getConfig().widgetPanels ?? DEFAULT_PANELS)];
-
-      const commit = (panels: string[]) => save(ctx, { ...getConfig(), widgetPanels: panels });
-
-      if (action === "reset") {
-        commit([...DEFAULT_PANELS]);
-        notify(ctx, `Dashboard reset to defaults: ${DEFAULT_PANELS.join(", ")}`, "success");
-        return;
-      }
-
-      if (action === "add") {
-        const id = parts[1];
-        if (id === "all") {
-          const next = [...current, ...PANEL_IDS.filter(p => !current.includes(p))];
-          commit(next);
-          notify(ctx, `All panels enabled. Dashboard: ${next.join(", ")}`, "success");
-          return;
-        }
-        if (!id || !PANEL_REGISTRY[id]) {
-          notify(ctx, `Unknown panel "${id ?? ""}". Run /venice-stats-panels to see available panels.`, "error");
-          return;
-        }
-        if (current.includes(id)) {
-          notify(ctx, `Panel "${id}" is already enabled.`, "info");
-          return;
-        }
-        commit([...current, id]);
-        notify(ctx, `Panel "${id}" added. Dashboard: ${[...current, id].join(", ")}`, "success");
-        return;
-      }
-
-      if (action === "remove") {
-        const id = parts[1];
-        if (!id || !current.includes(id)) {
-          notify(ctx, `Panel "${id ?? ""}" is not enabled.`, "error");
-          return;
-        }
-        const next = current.filter((p) => p !== id);
-        commit(next);
-        notify(ctx, `Panel "${id}" removed. Dashboard: ${next.join(", ") || "(empty)"}`, "success");
-        return;
-      }
-
-      if (action === "move") {
-        const id  = parts[1];
-        const dir = parts[2];
-        const idx = current.indexOf(id);
-        if (!id || idx < 0) {
-          notify(ctx, `Panel "${id ?? ""}" is not enabled.`, "error");
-          return;
-        }
-        if (dir !== "up" && dir !== "down") {
-          notify(ctx, `Usage: /venice-stats-panel move <id> up|down`, "error");
-          return;
-        }
-        const next = [...current];
-        const swap = dir === "up" ? idx - 1 : idx + 1;
-        if (swap < 0 || swap >= next.length) {
-          notify(ctx, `"${id}" is already at the ${dir === "up" ? "top" : "bottom"}.`, "info");
-          return;
-        }
-        [next[idx], next[swap]] = [next[swap], next[idx]];
-        commit(next);
-        notify(ctx, `Moved "${id}" ${dir}. Dashboard: ${next.join(", ")}`, "success");
-        return;
-      }
-
-      notify(ctx,
-        `Usage: /venice-stats-panel add <id> | remove <id> | move <id> up|down | reset\nRun /venice-stats-panels to see all panels.`,
-        "info"
-      );
-    },
-  });
 
   pi.registerCommand("venice-stats-wallet", {
     description: "Show or set your wallet address: /venice-stats-wallet [0x...] or /venice-stats-wallet clear",
@@ -134,7 +39,7 @@ export function registerVeniceStatsCommands(
         return;
       }
       if (!/^0x[0-9a-fA-F]{40}$/.test(addr)) {
-        notify(ctx, "Invalid address — must be 0x followed by 40 hex chars.", "error");
+        notify(ctx, "Invalid address \u2014 must be 0x followed by 40 hex chars.", "error");
         return;
       }
       save(ctx, { ...getConfig(), walletAddress: addr });
@@ -142,191 +47,253 @@ export function registerVeniceStatsCommands(
     },
   });
 
-  pi.registerCommand("venice-stats-budget", {
-    description: "Show or set the stats polling budget (1–59 req/min, default 30): /venice-stats-budget [1-59|reset]",
+  // Combined polling command: /venice-stats-polling budget <N> | billing <N>
+  pi.registerCommand("venice-stats-polling", {
+    description: "Manage polling rates: budget (venicestats.com) | billing (venice.ai API)",
     handler: async (args, ctx) => {
-      const raw = (args ?? "").trim();
+      const parts = (args ?? "").trim().split(/\s+/).filter(Boolean);
+      const sub = parts[0]?.toLowerCase();
+      const val = parts[1]?.trim();
+
       const BUDGET_DEFAULT = 30;
       const BUDGET_MIN = 1;
       const BUDGET_MAX = 59;
 
-      if (!raw) {
+      if (!sub) {
+        const bgt = getConfig().widgetBudget ?? BUDGET_DEFAULT;
+        const bgtSrc = getConfig().widgetBudget ? "(configured)" : "(default)";
+        const bill = getConfig().billingInterval ?? BILLING_INTERVAL_DEFAULT;
+        const billSrc = getConfig().billingInterval ? "(configured)" : "(default)";
+        notify(ctx,
+          `Polling settings:\n  Budget (venicestats.com): ${bgt} req/min ${bgtSrc} (range: ${BUDGET_MIN}\u2013${BUDGET_MAX})\n  Billing (venice.ai API): ${bill}s ${billSrc} (range: ${BILLING_INTERVAL_MIN}\u2013${BILLING_INTERVAL_MAX}s)\n\n` +
+          `Usage:\n  /venice-stats-polling budget <${BUDGET_MIN}-${BUDGET_MAX}|reset>  — venicestats.com request budget\n  /venice-stats-polling billing <${BILLING_INTERVAL_MIN}-${BILLING_INTERVAL_MAX}|reset>  — venice.ai billing poll interval`,
+          "info"
+        );
+        return;
+      }
+
+      if (sub === "budget") {
         const current = getConfig().widgetBudget ?? BUDGET_DEFAULT;
-        notify(ctx, `Stats widget polling budget: ${current} req/min (range: ${BUDGET_MIN}–${BUDGET_MAX}, default: ${BUDGET_DEFAULT})`, "info");
+        if (!val) {
+          const src = getConfig().widgetBudget ? "(configured)" : "(default)";
+          notify(ctx, `Polling budget (venicestats.com): ${current} req/min ${src} (range: ${BUDGET_MIN}\u2013${BUDGET_MAX})`, "info");
+          return;
+        }
+        if (val === "reset") {
+          const { widgetBudget: _, ...rest } = getConfig();
+          save(ctx, rest);
+          notify(ctx, `Polling budget reset to default (${BUDGET_DEFAULT} req/min).`, "success");
+          return;
+        }
+        const n = Number(val);
+        if (!Number.isInteger(n) || n < BUDGET_MIN || n > BUDGET_MAX) {
+          notify(ctx, `Invalid budget "${val}". Provide a whole number between ${BUDGET_MIN} and ${BUDGET_MAX}.`, "error");
+          return;
+        }
+        save(ctx, { ...getConfig(), widgetBudget: n });
+        notify(ctx, `Polling budget set to ${n} req/min (was ${current}). Takes effect on the next tick.`, "success");
         return;
       }
-      if (raw === "reset") {
-        const { widgetBudget: _, ...rest } = getConfig();
-        save(ctx, rest);
-        notify(ctx, `Polling budget reset to default (${BUDGET_DEFAULT} req/min).`, "success");
+
+      if (sub === "billing") {
+        const current = getConfig().billingInterval ?? BILLING_INTERVAL_DEFAULT;
+        if (!val) {
+          const src = getConfig().billingInterval ? "(configured)" : "(default)";
+          notify(ctx, `Billing interval (venice.ai API): ${current}s ${src} (range: ${BILLING_INTERVAL_MIN}\u2013${BILLING_INTERVAL_MAX}s)`, "info");
+          return;
+        }
+        if (val === "reset") {
+          const { billingInterval: _, ...rest } = getConfig();
+          save(ctx, rest);
+          notify(ctx, `Billing interval reset to default (${BILLING_INTERVAL_DEFAULT}s).`, "success");
+          return;
+        }
+        const n = Number(val);
+        if (!Number.isFinite(n) || n < BILLING_INTERVAL_MIN || n > BILLING_INTERVAL_MAX) {
+          notify(ctx, `Invalid interval "${val}". Provide a number between ${BILLING_INTERVAL_MIN} and ${BILLING_INTERVAL_MAX} seconds.`, "error");
+          return;
+        }
+        save(ctx, { ...getConfig(), billingInterval: Math.round(n) });
+        notify(ctx, `Billing interval set to ${Math.round(n)}s (was ${current}s). Takes effect on the next tick.`, "success");
         return;
       }
-      const n = Number(raw);
-      if (!Number.isInteger(n) || n < BUDGET_MIN || n > BUDGET_MAX) {
-        notify(ctx, `Invalid budget "${raw}". Provide a whole number between ${BUDGET_MIN} and ${BUDGET_MAX}.`, "error");
-        return;
-      }
-      save(ctx, { ...getConfig(), widgetBudget: n });
-      notify(ctx, `Polling budget set to ${n} req/min. Takes effect on the next tick.`, "success");
+
+      notify(ctx,
+        `Usage:\n  /venice-stats-polling budget <${BUDGET_MIN}-${BUDGET_MAX}|reset>  — venicestats.com request budget\n  /venice-stats-polling billing <${BILLING_INTERVAL_MIN}-${BILLING_INTERVAL_MAX}|reset>  — venice.ai billing poll interval`,
+        "info"
+      );
     },
   });
 
-  pi.registerCommand("venice-stats-tz", {
-    description: "Show or set the widget timezone (auto-detected by default): /venice-stats-tz [timezone|reset]",
+  // Combined time command: /venice-stats-time timezone <tz> | format <12h|24h> | reset
+  pi.registerCommand("venice-stats-time", {
+    description: "Manage time settings: /venice-stats-time timezone <IANA|reset> | format <12h|24h|reset>",
     handler: async (args, ctx) => {
-      const raw      = (args ?? "").trim();
+      const parts = (args ?? "").trim().split(/\s+/).filter(Boolean);
+      const sub = parts[0]?.toLowerCase();
+      const val = parts[1]?.trim();
       const detected = detectTimezone();
-      const current  = getConfig().widgetTimezone ?? detected;
 
-      if (!raw) {
-        const source    = getConfig().widgetTimezone ? "(configured)" : "(auto-detected)";
-        const available = Intl.supportedValuesOf ? Intl.supportedValuesOf("timeZone") : undefined;
-        let msg = `Widget timezone: ${current} ${source}`;
-        if (available) msg += `\nAuto-detected: ${detected}`;
-        msg += `\n\nUsage: /venice-stats-tz <IANA timezone> to set, /venice-stats-tz reset to clear.`;
-        notify(ctx, msg, "info");
+      if (!sub) {
+        const tz = getConfig().widgetTimezone ?? detected;
+        const tzSrc = getConfig().widgetTimezone ? "(configured)" : "(auto-detected)";
+        const fmt = getConfig().widgetTimeFormat ?? "24h";
+        const fmtSrc = getConfig().widgetTimeFormat ? "(configured)" : "(default)";
+        notify(ctx,
+          `Time settings:\n  Timezone: ${tz} ${tzSrc}\n  Format: ${fmt} ${fmtSrc}\n\n` +
+          `Usage:\n  /venice-stats-time timezone <IANA timezone|reset>\n  /venice-stats-time format <12h|24h|reset>`,
+          "info"
+        );
         return;
       }
-      if (raw === "reset") {
-        const { widgetTimezone: _, ...rest } = getConfig();
-        save(ctx, rest);
-        notify(ctx, `Timezone reset to auto-detected: ${detected}`, "success");
+
+      if (sub === "timezone" || sub === "tz") {
+        const current = getConfig().widgetTimezone ?? detected;
+        if (!val) {
+          const src = getConfig().widgetTimezone ? "(configured)" : "(auto-detected)";
+          notify(ctx, `Timezone: ${current} ${src}`, "info");
+          return;
+        }
+        if (val === "reset") {
+          const { widgetTimezone: _, ...rest } = getConfig();
+          save(ctx, rest);
+          notify(ctx, `Timezone reset to auto-detected: ${detected}`, "success");
+          return;
+        }
+        try {
+          new Date().toLocaleString("en-US", { timeZone: val, timeZoneName: "short" });
+        } catch {
+          notify(ctx, `Invalid timezone "${val}". Use an IANA timezone like "America/New_York" or "UTC".`, "error");
+          return;
+        }
+        save(ctx, { ...getConfig(), widgetTimezone: val });
+        notify(ctx, `Timezone set to ${val} (was ${current})`, "success");
         return;
       }
-      try {
-        new Date().toLocaleString("en-US", { timeZone: raw, timeZoneName: "short" });
-      } catch {
-        notify(ctx, `Invalid timezone "${raw}". Use an IANA timezone like "America/New_York" or "UTC".`, "error");
+
+      if (sub === "format" || sub === "fmt") {
+        const current = getConfig().widgetTimeFormat ?? "24h";
+        if (!val) {
+          const src = getConfig().widgetTimeFormat ? "(configured)" : "(default)";
+          notify(ctx, `Time format: ${current} ${src}`, "info");
+          return;
+        }
+        if (val === "reset") {
+          const { widgetTimeFormat: _, ...rest } = getConfig();
+          save(ctx, rest);
+          notify(ctx, `Time format reset to default (24h).`, "success");
+          return;
+        }
+        const v = val.toLowerCase();
+        if (v !== "12h" && v !== "24h") {
+          notify(ctx, `Invalid format "${val}". Use 12h or 24h.`, "error");
+          return;
+        }
+        save(ctx, { ...getConfig(), widgetTimeFormat: v });
+        notify(ctx, `Time format set to ${v} (was ${current})`, "success");
         return;
       }
-      save(ctx, { ...getConfig(), widgetTimezone: raw });
-      notify(ctx, `Widget timezone set to ${raw} (was ${current})`, "success");
+
+      notify(ctx,
+        `Usage:\n  /venice-stats-time timezone <IANA timezone|reset>\n  /venice-stats-time format <12h|24h|reset>`,
+        "info"
+      );
     },
   });
 
-  pi.registerCommand("venice-stats-time-format", {
-    description: "Show or set the widget time format (24h or 12h, default 24h): /venice-stats-time-format [24h|12h|reset]",
+  // Combined period command: /venice-stats-period chart <1h|24h|7d|30d> | exposure <1h|24h|7d|30d> | reset
+  pi.registerCommand("venice-stats-period", {
+    description: "Manage sparkline periods: /venice-stats-period chart <1h|24h|7d|30d|reset> | exposure <1h|24h|7d|30d|reset>",
     handler: async (args, ctx) => {
-      const raw     = (args ?? "").trim().toLowerCase();
-      const current = getConfig().widgetTimeFormat ?? "24h";
+      const parts = (args ?? "").trim().split(/\s+/).filter(Boolean);
+      const sub = parts[0]?.toLowerCase();
+      const val = parts[1]?.toLowerCase();
+      const validPeriods = ["1h", "24h", "7d", "30d"];
 
-      if (!raw) {
-        const source = getConfig().widgetTimeFormat ? "(configured)" : "(default)";
-        notify(ctx, `Widget time format: ${current} ${source}\nUsage: /venice-stats-time-format 12h or /venice-stats-time-format 24h or /venice-stats-time-format reset`, "info");
+      if (!sub) {
+        const chart = getConfig().chartPeriod ?? "24h";
+        const chartSrc = getConfig().chartPeriod ? "(configured)" : "(default)";
+        const exp = getConfig().exposurePeriod ?? "30d";
+        const expSrc = getConfig().exposurePeriod ? "(configured)" : "(default)";
+        notify(ctx,
+          `Sparkline periods:\n  Chart: ${chart} ${chartSrc}\n  Exposure: ${exp} ${expSrc}\n\n` +
+          `Usage:\n  /venice-stats-period chart <1h|24h|7d|30d|reset>\n  /venice-stats-period exposure <1h|24h|7d|30d|reset>`,
+          "info"
+        );
         return;
       }
-      if (raw === "reset") {
-        const { widgetTimeFormat: _, ...rest } = getConfig();
-        save(ctx, rest);
-        notify(ctx, `Time format reset to default (24h).`, "success");
-        return;
-      }
-      if (raw !== "12h" && raw !== "24h") {
-        notify(ctx, `Invalid format "${raw}". Use 12h or 24h.`, "error");
-        return;
-      }
-      save(ctx, { ...getConfig(), widgetTimeFormat: raw });
-      notify(ctx, `Time format set to ${raw} (was ${current})`, "success");
-    },
-  });
 
-  pi.registerCommand("venice-stats-billing-interval", {
-    description: `Show or set the billing poll interval in seconds (${BILLING_INTERVAL_MIN}–${BILLING_INTERVAL_MAX}, default ${BILLING_INTERVAL_DEFAULT}): /venice-stats-billing-interval [N|reset]`,
-    handler: async (args, ctx) => {
-      const raw     = (args ?? "").trim();
-      const current = getConfig().billingInterval ?? BILLING_INTERVAL_DEFAULT;
+      if (sub === "chart") {
+        const current = getConfig().chartPeriod ?? "24h";
+        if (!val) {
+          const src = getConfig().chartPeriod ? "(configured)" : "(default)";
+          notify(ctx, `Chart period: ${current} ${src}\nValid: ${validPeriods.join(", ")}`, "info");
+          return;
+        }
+        if (val === "reset") {
+          const { chartPeriod: _, ...rest } = getConfig();
+          save(ctx, rest);
+          notify(ctx, `Chart period reset to default (24h).`, "success");
+          getController?.()?.triggerChartsRefresh();
+          return;
+        }
+        if (!validPeriods.includes(val)) {
+          notify(ctx, `Invalid period "${val}". Use one of: ${validPeriods.join(", ")}`, "error");
+          return;
+        }
+        save(ctx, { ...getConfig(), chartPeriod: val as any });
+        getController?.()?.triggerChartsRefresh();
+        notify(ctx, `Chart period set to ${val} (was ${current}). Refreshing\u2026`, "success");
+        return;
+      }
 
-      if (!raw) {
-        const source = getConfig().billingInterval ? "(configured)" : "(default)";
-        notify(ctx, `Billing poll interval: ${current}s ${source}\nUsage: /venice-stats-billing-interval <${BILLING_INTERVAL_MIN}-${BILLING_INTERVAL_MAX}> or /venice-stats-billing-interval reset`, "info");
+      if (sub === "exposure" || sub === "exp") {
+        const current = getConfig().exposurePeriod ?? "30d";
+        if (!val) {
+          const src = getConfig().exposurePeriod ? "(configured)" : "(default)";
+          notify(ctx, `Exposure period: ${current} ${src}\nValid: ${validPeriods.join(", ")}`, "info");
+          return;
+        }
+        if (val === "reset") {
+          const { exposurePeriod: _, ...rest } = getConfig();
+          save(ctx, rest);
+          notify(ctx, `Exposure period reset to default (30d).`, "success");
+          getController?.()?.triggerExposureRefresh();
+          return;
+        }
+        if (!validPeriods.includes(val)) {
+          notify(ctx, `Invalid period "${val}". Use one of: ${validPeriods.join(", ")}`, "error");
+          return;
+        }
+        save(ctx, { ...getConfig(), exposurePeriod: val as any });
+        getController?.()?.triggerExposureRefresh();
+        notify(ctx, `Exposure period set to ${val} (was ${current}). Refreshing\u2026`, "success");
         return;
       }
-      if (raw === "reset") {
-        const { billingInterval: _, ...rest } = getConfig();
-        save(ctx, rest);
-        notify(ctx, `Billing poll interval reset to default (${BILLING_INTERVAL_DEFAULT}s).`, "success");
-        return;
-      }
-      const n = Number(raw);
-      if (!Number.isFinite(n) || n < BILLING_INTERVAL_MIN || n > BILLING_INTERVAL_MAX) {
-        notify(ctx, `Invalid interval "${raw}". Provide a number between ${BILLING_INTERVAL_MIN} and ${BILLING_INTERVAL_MAX} seconds.`, "error");
-        return;
-      }
-      save(ctx, { ...getConfig(), billingInterval: Math.round(n) });
-      notify(ctx, `Billing poll interval set to ${Math.round(n)}s (was ${current}s). Takes effect on the next tick.`, "success");
-    },
-  });
 
-  pi.registerCommand("venice-stats-chart-period", {
-    description: "Show or set the price sparkline period (1h, 24h, 7d, 30d, default 24h): /venice-stats-chart-period [period|reset]",
-    handler: async (args, ctx) => {
-      const raw = (args ?? "").trim().toLowerCase();
-      const valid = ["1h", "24h", "7d", "30d"] as const;
-      const current = getConfig().chartPeriod ?? "24h";
-
-      if (!raw) {
-        const source = getConfig().chartPeriod ? "(configured)" : "(default)";
-        notify(ctx, `Chart period: ${current} ${source}\nValid: ${valid.join(", ")}`, "info");
-        return;
-      }
-      if (raw === "reset") {
-        const { chartPeriod: _, ...rest } = getConfig();
-        save(ctx, rest);
-        notify(ctx, `Chart period reset to default (24h).`, "success");
-        return;
-      }
-      if (!valid.includes(raw as any)) {
-        notify(ctx, `Invalid period "${raw}". Use one of: ${valid.join(", ")}`, "error");
-        return;
-      }
-      save(ctx, { ...getConfig(), chartPeriod: raw as typeof valid[number] });
-      notify(ctx, `Chart period set to ${raw} (was ${current}). Takes effect on the next tick.`, "success");
-    },
-  });
-
-  pi.registerCommand("venice-stats-exposure-period", {
-    description: "Show or set the wallet exposure sparkline period (1h, 24h, 7d, 30d, default 30d): /venice-stats-exposure-period [period|reset]",
-    handler: async (args, ctx) => {
-      const raw = (args ?? "").trim().toLowerCase();
-      const valid = ["1h", "24h", "7d", "30d"] as const;
-      const current = getConfig().exposurePeriod ?? "30d";
-
-      if (!raw) {
-        const source = getConfig().exposurePeriod ? "(configured)" : "(default)";
-        notify(ctx, `Exposure period: ${current} ${source}\nValid: ${valid.join(", ")}`, "info");
-        return;
-      }
-      if (raw === "reset") {
-        const { exposurePeriod: _, ...rest } = getConfig();
-        save(ctx, rest);
-        notify(ctx, `Exposure period reset to default (1d).`, "success");
-        return;
-      }
-      if (!valid.includes(raw as any)) {
-        notify(ctx, `Invalid period "${raw}". Use one of: ${valid.join(", ")}`, "error");
-        return;
-      }
-      save(ctx, { ...getConfig(), exposurePeriod: raw as typeof valid[number] });
-      notify(ctx, `Exposure period set to ${raw} (was ${current}). Takes effect on the next tick.`, "success");
+      notify(ctx,
+        `Usage:\n  /venice-stats-period chart <1h|24h|7d|30d|reset>\n  /venice-stats-period exposure <1h|24h|7d|30d|reset>`,
+        "info"
+      );
     },
   });
 
   pi.registerCommand("venice-stats-widget", {
-    description: "Manage the stats widget lock: /venice-stats-widget claim — take over when the previous session is gone",
+    description: "Manage the stats widget lock: /venice-stats-widget claim \u2014 take over when the previous session is gone",
     handler: async (args, ctx) => {
       const sub = (args ?? "").trim();
       if (sub === "claim") {
         if (tryClaimStaleWidgetLock()) {
           stopPriceWidget(ctx);
           startWidget(ctx);
-          notify(ctx, "Stats widget claimed — polling started in this session.", "success");
+          notify(ctx, "Stats widget claimed \u2014 polling started in this session.", "success");
         } else {
           notify(ctx, "Another pi session is still running and holds the widget lock.\nClose it first, then run /venice-stats-widget claim again.", "error");
         }
         return;
       }
       notify(ctx,
-        "Usage: /venice-stats-widget claim — force-take the widget lock when the previous session is gone.",
+        "Usage: /venice-stats-widget claim \u2014 force-take the widget lock when the previous session is gone.",
         "info"
       );
     },

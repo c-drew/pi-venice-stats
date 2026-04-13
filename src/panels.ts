@@ -89,9 +89,11 @@ export interface BillingData {
 }
 
 export interface ChartsData {
-  /** 24h price values in chronological order (LTTB-downsampled). */
+  /** Price values in chronological order (LTTB-downsampled). */
   vvvPrices: number[];
+  vvvTimestamps: number[];
   diemPrices: number[];
+  diemTimestamps: number[];
   /** 7d cooldown wave series (VVV in cooldown queue at each timestamp). */
   cooldownWave: number[];
 }
