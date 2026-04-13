@@ -569,70 +569,61 @@ export function startPriceWidget(
             const vvvColor  = vvvFlash  === "up" ? "success" : vvvFlash  === "down" ? "error" : "text";
             const diemColor = diemFlash === "up" ? "success" : diemFlash === "down" ? "error" : "text";
 
-            // Map chart period → API metric keys (native values from /api/metrics)
-            // 30d is not in the API, so it falls back to chart-based computation.
+
+
             const PERIOD_MS: Record<string, number> = { "1h": 3_600_000, "24h": 86_400_000, "7d": 604_800_000, "30d": 2_592_000_000 };
-            const PERIOD_KEYS: Record<string, { vvv: keyof MetricsData; diem: keyof MetricsData }> = {
-              "1h":  { vvv: "vvvPriceChange1h",  diem: "diemPriceChange1h" },
-              "24h": { vvv: "priceChange24h",    diem: "diemPriceChange24h" },
-              "7d":  { vvv: "vvvPriceChange7d",   diem: "diemPriceChange7d" },
-              "30d": { vvv: "priceChange24h",     diem: "diemPriceChange24h" }, // placeholder — computed from chart below
-            };
-
-            // Chart-based % change for periods not in the API (30d)
-            const chartChg = (pts: number[] | undefined, ts: number[] | undefined): number | null => {
-              if (!pts || !ts || pts.length < 2) return null;
-              const cp = getChartPeriod();
-              const windowMs = PERIOD_MS[cp] ?? 86_400_000;
-              const cutoff = ts[ts.length - 1] - windowMs;
-              let idx = 0;
-              for (let i = 0; i < ts.length; i++) { if (ts[i] >= cutoff) { idx = i; break; } }
-              const first = pts[idx], last = pts[pts.length - 1];
-              return first > 0 ? ((last - first) / first) * 100 : 0;
-            };
-
             const cp = getChartPeriod();
-            let vvvChangePct: number;
-            let diemChangePct: number;
-            if (cp === "30d") {
-              vvvChangePct  = chartChg(charts?.vvvPrices,  charts?.vvvTimestamps)  ?? metrics.priceChange24h;
-              diemChangePct = chartChg(charts?.diemPrices, charts?.diemTimestamps) ?? metrics.diemPriceChange24h;
-            } else {
-              const periodKeys = PERIOD_KEYS[cp] ?? PERIOD_KEYS["24h"];
-              vvvChangePct  = metrics[periodKeys.vvv]  as number;
-              diemChangePct = metrics[periodKeys.diem] as number;
-            }
-            const vvvChg    = vvvChangePct  >= 0 ? "success" : "error";
-            const diemChg   = diemChangePct >= 0 ? "success" : "error";
-
-            // Trim chart data to the requested time window for sparklines
             const trimToWindow = (pts: number[], ts: number[]): number[] => {
               if (!pts.length || !ts.length) return pts;
-              const windowMs = PERIOD_MS[getChartPeriod()] ?? 86_400_000;
+              const windowMs = PERIOD_MS[cp] ?? 86_400_000;
               const cutoff = ts[ts.length - 1] - windowMs;
               let idx = 0;
               for (let i = 0; i < ts.length; i++) { if (ts[i] >= cutoff) { idx = i; break; } }
               return pts.slice(idx);
             };
+
             const sparkW = isWide ? 12 : 8;
-            const vvvSparkPts  = charts ? trimToWindow(charts.vvvPrices, charts.vvvTimestamps) : [];
+            const vvvSparkPts  = charts ? trimToWindow(charts.vvvPrices,  charts.vvvTimestamps)  : [];
             const diemSparkPts = charts ? trimToWindow(charts.diemPrices, charts.diemTimestamps) : [];
-            const vvvSpark  = vvvSparkPts.length
-              ? theme.fg(vvvChg, sparkline(vvvSparkPts, sparkW)) : "";
-            const diemSpark = diemSparkPts.length
-              ? theme.fg(diemChg, sparkline(diemSparkPts, sparkW)) : "";
+
+
+            let vvvChangePct: number;
+            let diemChangePct: number;
+            if (cp === "30d") {
+              const vvvFirst = vvvSparkPts[0]  ?? 0;
+              const vvvLast  = vvvSparkPts[vvvSparkPts.length - 1]  ?? 0;
+              const diemFirst = diemSparkPts[0] ?? 0;
+              const diemLast  = diemSparkPts[diemSparkPts.length - 1] ?? 0;
+              vvvChangePct  = vvvFirst  > 0 ? ((vvvLast  - vvvFirst)  / vvvFirst)  * 100 : 0;
+              diemChangePct = diemFirst > 0 ? ((diemLast - diemFirst) / diemFirst) * 100 : 0;
+            } else {
+              const PERIOD_KEYS: Record<string, { vvv: keyof MetricsData; diem: keyof MetricsData }> = {
+                "1h":  { vvv: "vvvPriceChange1h",  diem: "diemPriceChange1h" },
+                "24h": { vvv: "priceChange24h",    diem: "diemPriceChange24h" },
+                "7d":  { vvv: "vvvPriceChange7d",   diem: "diemPriceChange7d" },
+              };
+              const pk = PERIOD_KEYS[cp] ?? PERIOD_KEYS["24h"];
+              vvvChangePct  = metrics[pk.vvv]  as number;
+              diemChangePct = metrics[pk.diem] as number;
+            }
+            const vvvSparkColor = vvvChangePct  >= 0 ? "success" : "error";
+            const diemSparkColor = diemChangePct >= 0 ? "success" : "error";
+            const vvvSpark  = vvvSparkPts.length >= 2
+              ? theme.fg(vvvSparkColor,  sparkline(vvvSparkPts,  sparkW)) : "";
+            const diemSpark = diemSparkPts.length >= 2
+              ? theme.fg(diemSparkColor, sparkline(diemSparkPts, sparkW)) : "";
             const diemMCap = metrics.diemPrice * metrics.diemSupply;
             const gap = isWide ? "      " : "    ";
 
             const vvvP = hdr("VVV ") +
               theme.fg(vvvColor, `$${metrics.vvvPrice.toFixed(4)}`) +
               (vvvSpark ? " " + vvvSpark : "") +
-              theme.fg(vvvChg, ` ${arrow(vvvChangePct)}`) +
+              theme.fg(vvvSparkColor, ` ${arrow(vvvChangePct)}`) +
               dim(` ${getChartPeriod()}`);
             const diemP = hdr("DIEM ") +
               theme.fg(diemColor, `$${metrics.diemPrice.toFixed(2)}`) +
               (diemSpark ? " " + diemSpark : "") +
-              theme.fg(diemChg, ` ${arrow(diemChangePct)}`) +
+              theme.fg(diemSparkColor, ` ${arrow(diemChangePct)}`) +
               dim(` ${getChartPeriod()}`);
 
             const vvvRank  = social?.marketCapRank     ? dim(" \u00B7 Ranked #") + theme.fg("text", String(social.marketCapRank))     : "";
