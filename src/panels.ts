@@ -179,9 +179,9 @@ export function gauge(ratio: number, barWidth: number, theme: MiniTheme, color: 
   return theme.fg(color as any, "█".repeat(filled)) + theme.fg("dim", "░".repeat(barWidth - filled));
 }
 
-/** Arrow + percentage, e.g. ↑5.2% or ↓1.3% */
+/** Arrow + percentage, e.g. ↑5.20% or ↓1.30% */
 export function arrow(pct: number): string {
-  return pct >= 0 ? `↑${pct.toFixed(1)}%` : `↓${Math.abs(pct).toFixed(1)}%`;
+  return pct >= 0 ? `↑${pct.toFixed(2)}%` : `↓${Math.abs(pct).toFixed(2)}%`;
 }
 
 /** Compute a gauge bar width relative to the terminal width. */
