@@ -9,6 +9,8 @@ export interface VeniceStatsConfig {
   widgetTimezone?: string;
   widgetTimeFormat?: "24h" | "12h";
   billingInterval?: number;
+  chartPeriod?: "1h" | "24h" | "7d" | "30d";
+  exposurePeriod?: "1h" | "24h" | "7d" | "30d";
 }
 
 export function defaultConfig(): VeniceStatsConfig {
@@ -36,6 +38,10 @@ export function loadConfig(ctx: ExtensionContext): VeniceStatsConfig {
   if (typeof latest.widgetTimezone === "string") config.widgetTimezone = latest.widgetTimezone;
   if (latest.widgetTimeFormat === "12h" || latest.widgetTimeFormat === "24h") config.widgetTimeFormat = latest.widgetTimeFormat;
   if (typeof latest.billingInterval === "number") config.billingInterval = latest.billingInterval;
+  const validChartPeriods = ["1h", "24h", "7d", "30d"];
+  if (validChartPeriods.includes(latest.chartPeriod)) config.chartPeriod = latest.chartPeriod;
+  const validExposurePeriods = ["1h", "24h", "7d", "30d"];
+  if (validExposurePeriods.includes(latest.exposurePeriod)) config.exposurePeriod = latest.exposurePeriod;
 
   return config;
 }

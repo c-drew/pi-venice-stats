@@ -18,33 +18,39 @@ pi -e npm:pi-venice-stats
 
 ## Default view
 
-Two-column layout — protocol data on the left, system/balance/wallet on the right rail (40 chars):
+Two-column box-drawing grid — protocol data on the left, system/balance/wallet on the right rail:
 
 ```
- PRICES ──────────────────────────────────── │ SYSTEM ─────────────────────────────
- VVV $8.05 ▆█▅▃▂▃▃▁▂▂▃▃ ↓4.6% 24h           │ EDT 22:07:31  ·  next epoch 21h 52m
- MCap $368.6M Ranked #117  ·  DIEM …          │ BALANCE ────────────────────────────
- STAKING ─────────────────────────────────── │ $0.14 USD  ·  DIEM 0.00 / 4.96 used
- 67.8% @ 18.2% APR  ·  +95 stakers 7d  …     │ WALLET ─────────────────────────────
- DIEM ────────────────────────────────────── │ 0x4486…80bc  Patrician Octopus 🐙
- Supply 10.5M  ·  Mint 1 sVVV  ·  …  78% ██░ │ Portfolio $26.2K  ·  Rank #466/14.4k
- 24H MARKET ──────────────────────────────── │ sVVV 3,302  ·  Pending 0.20 VVV
- Vol $6.42M (+28.6%)  Traders 2,007 (+95%)    │ ▁▂▂▂▁▁▂▂▂▂▂▄▃▄▃▃▅▆▆█ $33.2K ↑78% 7d
- Buy/Sell 47/53%  Net Flow +286k  Top: …      │
+┌──────────────────────────────────────────────────────────────┬──────────────────────────────────────┐
+│ VVV $8.07 ▇█▃▂▃▄▁▁▃▂▃▃ ↓4.2% 24h      DIEM $1060.79 …    │ SYSTEM                               │
+│ MCap $371.8M · Ranked #117 · FDV $399M  MCap $40.1M …      │ EDT 17:25:14 · next epoch 2h 34m 45s │
+├──────────────────────────────────────────────────────────────┼──────────────────────────────────────┤
+│ VVV STAKING                                                  │ BALANCE                              │
+│ Staked ███████░░░ 67.7% @ 18.2% APR   Locked …   Cooldown … │ $0.1426 · DIEM 0.8061/4.9615 used    │
+├──────────────────────────────────────────────────────────────┼──────────────────────────────────────┤
+│ DIEM ANALYTICS                                               │ WALLET                               │
+│ DIEM Supply 37.8k   Mint Rate 665 sVVV   Rem …   Staked ██░ │ 0x4486…80bc Patrician Octopus 🐙      │
+├──────────────────────────────────────────────────────────────┤ Portfolio $26.7K   Rank #465/14.5k   │
+│ 24H MARKET                                                   │ ⎿ sVVV 3,303   Pending 0.12 VVV      │
+│ Vol $5.0M ↓19.6%   Traders 1,683 ↑42%   Swaps 10.2k         │ PROTOCOL EXPOSURE                    │
+│ Buy/Sell 48/52%   Net Flow +228k VVV (7d)   Top: VVV/WETH    │ ▁▂▂▂▁▁▂▂▂▂▂▄▃▄▃▃▅▆▆█  $31.9K ↑14% 30d │
+└──────────────────────────────────────────────────────────────┴──────────────────────────────────────┘
 ```
 
 - VVV and DIEM prices flash **green** on uptick and **red** on downtick
-- 24h sparklines rendered with unicode block elements (`▁▂▃▄▅▆▇█`)
-- MCap CoinGecko ranks shown next to market cap values
-- 7-day wallet exposure sparkline with USD total and change %
+- Configurable sparkline periods: `1h`, `24h`, `7d`, `30d` for both prices and exposure
+- MCap with CoinGecko rank and FDV (fully diluted valuation)
+- **Portfolio** = `(sVVV + VVV + pending rewards + cooldown) × VVV price` — VVV-denominated holdings
+- **Protocol Exposure** = portfolio + DIEM staked value — total protocol position, computed live
+- Section headers in blue (`syntaxKeyword`), wallet address colored by venetian role
 - Width-adaptive: gracefully degrades on narrow terminals (< 80 cols stacks vertically)
 
 ## Clock overlay
 
-Always right-aligned. When `VENICE_ADMIN_API_KEY` is set, billing info appears on two rows:
+Shown in the SYSTEM and BALANCE sections of the right rail. When `VENICE_ADMIN_API_KEY` is set:
 
-- **Row 1** — `TZAbbrev HH:MM:SS  ·  next epoch Xh YYm ZZs`
-- **Row 2** — `$X.XX USD  ·  DIEM Balance X / Y used` (USD omitted when < $0.01; DIEM turns **red** below 10% remaining)
+- **SYSTEM** — `TZAbbrev HH:MM:SS · next epoch Xh YYm ZZs`
+- **BALANCE** — `$X.XX · DIEM X/Y used` (USD omitted when < $0.01; DIEM turns **red** below 10% remaining)
 
 DIEM precision scales dynamically based on your epoch allocation and remaining balance — so small allocations and low balances always show meaningful digits:
 
@@ -74,6 +80,23 @@ export VENICE_ADMIN_API_KEY="your-venice-admin-key"
 /venice-stats-billing-interval         ← show current (default 30s, range 5–600s)
 /venice-stats-billing-interval 60      ← set new interval (takes effect on next tick)
 /venice-stats-billing-interval reset
+```
+
+**Chart period commands:**
+
+```text
+/venice-stats-chart-period             ← show current (default 24h)
+/venice-stats-chart-period 1h          ← 1-hour sparklines
+/venice-stats-chart-period 24h         ← 24-hour (default)
+/venice-stats-chart-period 7d          ← 7-day
+/venice-stats-chart-period 30d         ← 30-day
+/venice-stats-chart-period reset
+/venice-stats-exposure-period          ← show current (default 30d)
+/venice-stats-exposure-period 1h       ← 1-hour
+/venice-stats-exposure-period 24h      ← 24-hour
+/venice-stats-exposure-period 7d       ← 7-day
+/venice-stats-exposure-period 30d      ← 30-day (default)
+/venice-stats-exposure-period reset
 ```
 
 ## Tracking your wallet
@@ -113,11 +136,11 @@ The layout is organized into left-column sections and a right rail. Panels can b
 
 | id | Label | What it shows | Data source |
 |----|-------|---------------|-------------|
-| `prices` | Prices | VVV + DIEM + ETH prices with sparklines, 24h % change, MCap with CoinGecko rank | `/api/metrics`, `/api/charts`, `/api/social` |
-| `staking` | Staking | Staking ratio, APR, new stakers (7d), growth %, cooldown count | `/api/metrics` |
-| `diem` | DIEM | Supply, mint rate, remaining mintable, staked gauge (all on one line) | `/api/metrics` |
-| `markets` | 24H Market | Volume (+%), traders (+%), swaps (+%), buy/sell ratio, net flow, top pool | `/api/markets` |
-| `wallet` | Wallet | Identity, portfolio USD, rank, sVVV, pending rewards, 7d exposure sparkline | `/api/venetians`, `/api/wallet-history` |
+| `prices` | Prices | VVV + DIEM prices with sparklines, change %, MCap, CoinGecko rank, FDV | `/api/metrics`, `/api/charts`, `/api/social` |
+| `staking` | VVV Staking | Staking ratio, APR, locked %, cooldown sparkline + count | `/api/metrics`, `/api/charts` |
+| `diem` | DIEM Analytics | Supply, mint rate, remaining mintable, staked gauge | `/api/metrics` |
+| `markets` | 24H Market | Volume, traders, swaps (with arrow change indicators), buy/sell, net flow, top pool | `/api/markets` |
+| `wallet` | Wallet | Address, venetian name, portfolio (sVVV+VVV+rewards+cooldown), rank, protocol exposure sparkline | `/api/venetians`, `/api/wallet-history` |
 
 **Dynamic rate allocation** — targets a configurable budget (default **30 req/min**, range **1–59**), shared automatically across active data sources.
 
