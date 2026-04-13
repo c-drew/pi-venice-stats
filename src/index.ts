@@ -1,5 +1,5 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { DEFAULT_PANELS, detectTimezone, BILLING_INTERVAL_DEFAULT } from "./panels.ts";
+import { DEFAULT_PANELS, detectTimezone } from "./panels.ts";
 import { startPriceWidget, stopPriceWidget, tryAcquireWidgetLock, releaseWidgetLock } from "./widget.ts";
 import type { WidgetController } from "./widget.ts";
 import { loadConfig, persistConfig, defaultConfig } from "./state.ts";
@@ -22,7 +22,6 @@ export default function (pi: ExtensionAPI) {
       () => config.widgetPanels ?? DEFAULT_PANELS,
       () => config.widgetTimezone ?? detectTimezone(),
       () => config.widgetTimeFormat ?? "24h",
-      () => config.billingInterval ?? BILLING_INTERVAL_DEFAULT,
       () => config.chartPeriod ?? "24h",
       () => config.exposurePeriod ?? "30d",
     );

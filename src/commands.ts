@@ -1,5 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
-import { detectTimezone, BILLING_INTERVAL_DEFAULT, BILLING_INTERVAL_MIN, BILLING_INTERVAL_MAX } from "./panels.ts";
+import { detectTimezone } from "./panels.ts";
 import { tryClaimStaleWidgetLock, stopPriceWidget } from "./widget.ts";
 import type { WidgetController } from "./widget.ts";
 import { persistConfig } from "./state.ts";
@@ -47,45 +47,24 @@ export function registerVeniceStatsCommands(
     },
   });
 
-  // Polling is now health-driven for venicestats.com (automatic). Billing interval
-  // is still configurable via /venice-stats-billing.
-  pi.registerCommand("venice-stats-polling", {
-    description: "Show current polling status (venicestats.com polls on data updates automatically)",
+  // Polling status + venice.ai billing info
+  pi.registerCommand("venice-stats-health", {
+    description: "Show polling status for venicestats.com and venice.ai billing",
     handler: async (args, ctx) => {
-      const bill = getConfig().billingInterval ?? BILLING_INTERVAL_DEFAULT;
-      const billSrc = getConfig().billingInterval ? "(configured)" : "(default)";
+      const adminKey = process.env["VENICE_ADMIN_API_KEY"];
+      if (!adminKey) {
+        notify(ctx,
+          `Polling: health-driven (venicestats.com checks every ~90s, fetches on data update)\n\n` +
+          `Billing: VENICE_ADMIN_API_KEY not set \u2014 no balance tracking`,
+          "info"
+        );
+        return;
+      }
       notify(ctx,
-        `Polling: health-driven (venicestats.com checks every ~90s, fetches on data update)\n  Billing (venice.ai API): ${bill}s ${billSrc} (range: ${BILLING_INTERVAL_MIN}\u2013${BILLING_INTERVAL_MAX}s)\n\n` +
-        `Usage:\n  /venice-stats-billing <${BILLING_INTERVAL_MIN}\u2013${BILLING_INTERVAL_MAX}|reset>  \u2014 venice.ai billing poll interval`,
+        `Polling: health-driven (venicestats.com checks every ~90s, fetches on data update)\n\n` +
+        `Billing: venice.ai /billing/balance\n  \u2022 Rate: 1 req/min max\n  \u2022 Also refreshes after each agent loop completes\n  \u2022 Endpoint: https://api.venice.ai/api/v1/billing/balance\n  \u2022 Last hit: shown on widget clock (US$ + DIEM balance)`,
         "info"
       );
-    },
-  });
-
-  // venice.ai billing interval (formerly /venice-stats-polling billing)
-  pi.registerCommand("venice-stats-billing", {
-    description: "Set venice.ai billing balance poll interval in seconds",
-    handler: async (args, ctx) => {
-      const val = (args ?? "").trim();
-      const current = getConfig().billingInterval ?? BILLING_INTERVAL_DEFAULT;
-      if (!val) {
-        const src = getConfig().billingInterval ? "(configured)" : "(default)";
-        notify(ctx, `Billing interval: ${current}s ${src} (range: ${BILLING_INTERVAL_MIN}\u2013${BILLING_INTERVAL_MAX}s)`, "info");
-        return;
-      }
-      if (val === "reset") {
-        const { billingInterval: _, ...rest } = getConfig();
-        save(ctx, rest);
-        notify(ctx, `Billing interval reset to default (${BILLING_INTERVAL_DEFAULT}s).`, "success");
-        return;
-      }
-      const n = Number(val);
-      if (!Number.isFinite(n) || n < BILLING_INTERVAL_MIN || n > BILLING_INTERVAL_MAX) {
-        notify(ctx, `Invalid interval "${val}". Provide a number between ${BILLING_INTERVAL_MIN} and ${BILLING_INTERVAL_MAX} seconds.`, "error");
-        return;
-      }
-      save(ctx, { ...getConfig(), billingInterval: Math.round(n) });
-      notify(ctx, `Billing interval set to ${Math.round(n)}s (was ${current}s).`, "success");
     },
   });
 
