@@ -386,30 +386,35 @@ export function renderClock(
   }
 
   const diemRemaining = billing.diemBalance ?? 0;
-  const diemDecimals =
-    billing.diemEpochAllocation < 1  || diemRemaining < 1  ? 6 :
-    billing.diemEpochAllocation < 10 || diemRemaining < 10 ? 4 :
-    2;
+  const exhausted     = diemRemaining < 0.005; // rounds to 0.00 at 2dp
+  const alloc         = billing.diemEpochAllocation;
+  const diemDecimals  = exhausted ? 2 :
+    alloc >= 1000 || diemRemaining >= 1000 ? 0 :
+    alloc >= 100  || diemRemaining >= 100  ? 1 :
+    alloc >= 10   || diemRemaining >= 10   ? 2 :
+    alloc >= 1    || diemRemaining >= 1    ? 3 :
+    4;
   const fmtDiemVal = (n: number): string => n.toFixed(diemDecimals);
-  const fmtUsdVal  = (n: number): string => n < 1 ? n.toFixed(4) : n.toFixed(2);
+  const fmtUsdVal  = (n: number): string => n.toFixed(2);
 
   let usd = "";
-  if (billing.usdBalance !== null && billing.usdBalance >= 0.01) {
-    usd = theme.fg("dim", "$") + theme.fg("text", fmtUsdVal(billing.usdBalance)) + theme.fg("dim", " USD");
+  if (billing.usdBalance !== null) {
+    const usdExhausted = billing.usdBalance < 0.005;
+    const usdColor = usdExhausted ? "error" : "text";
+    usd = theme.fg("dim", "$") + theme.fg(usdColor, fmtUsdVal(billing.usdBalance)) + theme.fg("dim", " USD");
   }
 
   let diem = "";
   if (billing.diemBalance !== null) {
-    const remainingPct = billing.diemEpochAllocation > 0
-      ? (billing.diemBalance / billing.diemEpochAllocation) * 100
-      : 100;
-    const usedDiem  = billing.diemEpochAllocation - billing.diemBalance;
-    const diemColor = remainingPct < 10 ? "error" : "text";
+    const remainingPct = alloc > 0 ? (diemRemaining / alloc) * 100 : 100;
+    const usedDiem     = alloc - diemRemaining;
+    const diemColor    = exhausted || remainingPct < 10 ? "error" : "text";
+    const allocColor   = exhausted ? "error" : "text";
     diem =
       theme.fg("dim", "DIEM ") +
       theme.fg(diemColor, fmtDiemVal(usedDiem)) +
       theme.fg("dim", "/") +
-      theme.fg("text", fmtDiemVal(billing.diemEpochAllocation)) +
+      theme.fg(allocColor, fmtDiemVal(alloc)) +
       theme.fg("dim", " used");
   }
 
