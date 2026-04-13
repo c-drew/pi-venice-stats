@@ -1,9 +1,18 @@
 /**
  * Venice stats widget: polling, lock management, and TUI rendering.
  *
- * Two independent polling groups share a single 500 ms master ticker:
- *   1. venicestats.com sources — budget-driven via SOURCE_WEIGHTS
- *   2. venice.ai /billing/balance — own fixed interval (default 30s)
+ * Polling is driven by /api/health — a lightweight sentinel that tells us when
+ * each data pipeline has actually refreshed. Pipeline update frequencies
+ * (observed over 30+ minutes of polling):
+ *   prices       ~3 min   | diem        ~5 min  | staking     ~5 min
+ *   holders      ~10 min  | burns       ~10 min | diemEvents  ~10 min
+ *   rewards      ~10 min | stakingEvents ~10 min
+ *
+ * Strategy:
+ *   1. Poll /api/health every ~90s — sentinel, ~1 req/min
+ *   2. Each pipeline has a stale-threshold; when ageSec drops below it,
+ *      the corresponding data fetch fires
+ *   3. Billing uses its own fixed interval (unchanged)
  */
 
 import { appendFileSync, existsSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
@@ -13,7 +22,6 @@ import type { ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { visibleWidth, truncateToWidth } from "@mariozechner/pi-tui";
 import {
   PANEL_REGISTRY,
-  SOURCE_WEIGHTS,
   BILLING_INTERVAL_MIN,
   BILLING_INTERVAL_MAX,
   ROLE_COLOR,
@@ -43,13 +51,32 @@ import {
 // Constants
 // ---------------------------------------------------------------------------
 
-const VENICE_API_BASE   = "https://api.venice.ai/api/v1";
-const STATS_WIDGET_KEY  = "venice-stats";
-const STATS_LOG         = join(homedir(), ".pi", "venice-stats.log");
-const FLASH_MS          = 400;
-const BUDGET_MIN        = 1;
-const BUDGET_MAX        = 59;
+const VENICE_API_BASE  = "https://api.venice.ai/api/v1";
+const STATS_WIDGET_KEY = "venice-stats";
+const STATS_LOG        = join(homedir(), ".pi", "venice-stats.log");
+const FLASH_MS         = 400;
 const TICK_MS           = 500;
+
+// How often to poll /api/health — 90s gives us a ~2 catch windows to notice
+// any pipeline refresh (prices update every 3 min, diem/staking every 5 min).
+const HEALTH_POLL_MS   = 90_000;
+const HEALTH_ENDPOINT  = "https://venicestats.com/api/health";
+
+// Per-pipeline thresholds: the ageSec below which we consider the pipeline
+// freshly updated and should re-fetch its data. Set just under the observed
+// update interval so we catch the update right after it fires.
+const STALE_THRESHOLD: Record<string, number> = {
+  prices:  180,  // ~3 min interval → 3 min stale
+  diem:    300,  // ~5 min interval → 5 min stale
+  staking: 300,  // ~5 min interval → 5 min stale
+  holders: 600,  // ~10 min interval → 10 min stale
+  burns:   600,  // ~10 min interval → 10 min stale
+  diemEvents:     600,
+  rewards:        600,
+  stakingEvents:  600,
+  treasury: 1800, // ~30 min interval → 30 min stale
+  vesting: 21600, // ~6 h interval → 6 h stale (essentially never in a session)
+};
 
 // ---------------------------------------------------------------------------
 // Multi-session lock
@@ -61,13 +88,11 @@ let _lockOwned = false;
 function isPiProcess(pid: number): boolean {
   if (pid === process.pid) return true;
   try { process.kill(pid, 0); } catch { return false; }
-  // On Linux/WSL verify the PID belongs to a pi process to guard against
-  // PID reuse after a crash.
   try {
     const cmdline = readFileSync(`/proc/${pid}/cmdline`, "utf8");
     return cmdline.split("\0").some((tok) => /\bpi\b/.test(tok));
   } catch {
-    return true; // /proc not available (macOS/Windows) — trust kill(0)
+    return true;
   }
 }
 
@@ -77,7 +102,7 @@ export function tryAcquireWidgetLock(): boolean {
       const raw = readFileSync(WIDGET_LOCK, "utf8").trim();
       const pid = Number(raw);
       if (!isNaN(pid) && isPiProcess(pid) && pid !== process.pid) {
-        return false; // another live pi session owns the lock
+        return false;
       }
     }
     writeFileSync(WIDGET_LOCK, String(process.pid), "utf8");
@@ -86,8 +111,6 @@ export function tryAcquireWidgetLock(): boolean {
   } catch { return false; }
 }
 
-/** Try to claim a lock left by a session that appears to be gone.
- *  Refuses if another live pi session still holds it. */
 export function tryClaimStaleWidgetLock(): boolean {
   return tryAcquireWidgetLock();
 }
@@ -103,30 +126,8 @@ export function releaseWidgetLock(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Rate helpers
+// Logging
 // ---------------------------------------------------------------------------
-
-function getActiveSources(panels: string[]): Set<string> {
-  const sources = new Set<string>();
-  for (const id of panels) {
-    for (const src of (PANEL_REGISTRY[id]?.sources ?? [])) sources.add(src);
-  }
-  return sources;
-}
-
-function computeIntervals(activeSources: Set<string>, budgetPerMin: number): Map<string, number> {
-  const budget = Math.max(BUDGET_MIN, Math.min(BUDGET_MAX, budgetPerMin));
-  const minInterval = Math.ceil(60_000 / budget);
-  const totalWeight = [...activeSources].reduce(
-    (s, src) => s + (SOURCE_WEIGHTS[src] ?? 1), 0
-  );
-  const map = new Map<string, number>();
-  for (const src of activeSources) {
-    const reqPerMin = ((SOURCE_WEIGHTS[src] ?? 1) / totalWeight) * budget;
-    map.set(src, Math.max(minInterval, Math.round(60_000 / reqPerMin)));
-  }
-  return map;
-}
 
 function plog(msg: string) {
   const ts = new Date().toISOString();
@@ -138,12 +139,8 @@ function plog(msg: string) {
 // ---------------------------------------------------------------------------
 
 export interface WidgetController {
-  /** Trigger an out-of-schedule billing refresh. Call after an agent response
-   * so the balance updates promptly rather than waiting for the next interval. */
   triggerBillingRefresh(): void;
-  /** Trigger an immediate charts re-fetch (e.g. after chart period change). */
   triggerChartsRefresh(): void;
-  /** Trigger an immediate wallet-history re-fetch (e.g. after exposure period change). */
   triggerExposureRefresh(): void;
 }
 
@@ -151,7 +148,6 @@ export function startPriceWidget(
   ctx:                ExtensionContext,
   getWallet:          () => string | undefined,
   getPanels:          () => string[],
-  getBudget:          () => number,
   getTimezone:        () => string,
   getTimeFormat:      () => "24h" | "12h",
   getBillingInterval: () => number,
@@ -159,8 +155,8 @@ export function startPriceWidget(
   getExposurePeriod:  () => "1h" | "24h" | "7d" | "30d",
 ): WidgetController {
   const controller: WidgetController = {
-    triggerBillingRefresh: () => {},  // wired up once the widget factory runs
-    triggerChartsRefresh: () => {},  // wired up once the widget factory runs
+    triggerBillingRefresh: () => {},
+    triggerChartsRefresh: () => {},
     triggerExposureRefresh: () => {},
   };
   plog(`startPriceWidget called — hasUI=${ctx.hasUI}`);
@@ -171,15 +167,19 @@ export function startPriceWidget(
     (tui, theme) => {
       plog("widget factory invoked");
 
-      let metrics:  MetricsData  | null = null;
-      let wallet:   WalletData   | null = null;
-      let social:   SocialData   | null = null;
-      let markets:  MarketsData  | null = null;
-      let billing:  BillingData  | null = null;
-      let charts:   ChartsData   | null = null;
+      let metrics:    MetricsData    | null = null;
+      let wallet:     WalletData     | null = null;
+      let social:     SocialData     | null = null;
+      let markets:    MarketsData    | null = null;
+      let billing:    BillingData   | null = null;
+      let charts:     ChartsData    | null = null;
       let walletExposure: WalletExposure | null = null;
       let lastWalletAddr: string | undefined;
       let disposed = false;
+
+      // Last seen ageSec per pipeline (from /api/health). When ageSec drops
+      // below a threshold, the pipeline just updated and we should refetch.
+      const pipelineAge = new Map<string, number>();
 
       const clockTick = setInterval(() => {
         if (!disposed) tui.requestRender();
@@ -307,14 +307,13 @@ export function startPriceWidget(
           };
           plog(`wallet ok — ${wallet.label} rank #${wallet.rank}`);
           logPanels();
-          // Fire wallet history in parallel (non-blocking, shares wallet budget)
           fetchWalletHistory();
         } catch (err) { sourceErrors.set("wallet", (sourceErrors.get("wallet") ?? 0) + 1); plog(`wallet error: ${err}`); }
         if (!disposed) tui.requestRender();
       }
 
       async function fetchSocial() {
-        if (!getActiveSources(getPanels()).has("social")) return;
+        if (!getPanels().includes("social")) { social = null; return; }
         try {
           const res = await fetch("https://venicestats.com/api/social");
           if (!res.ok) { sourceErrors.set("social", (sourceErrors.get("social") ?? 0) + 1); plog(`social error: ${res.status}`); return; }
@@ -332,7 +331,7 @@ export function startPriceWidget(
       }
 
       async function fetchMarkets() {
-        if (!getPanels().includes("markets")) return;
+        if (!getPanels().includes("markets")) { markets = null; return; }
         try {
           const res = await fetch("https://venicestats.com/api/markets?token=VVV&period=24h");
           if (!res.ok) { sourceErrors.set("markets", (sourceErrors.get("markets") ?? 0) + 1); plog(`markets error: ${res.status}`); return; }
@@ -360,9 +359,9 @@ export function startPriceWidget(
       }
 
       async function fetchCharts() {
-        if (!getActiveSources(getPanels()).has("charts")) return;
+        if (!getPanels().some(id => ["prices", "staking", "diem", "markets"].includes(id))) return;
+        const cp = getChartPeriod();
         try {
-          const cp = getChartPeriod();
           const [vvvRes, diemRes, waveRes] = await Promise.all([
             fetch(`https://venicestats.com/api/charts?period=${cp}&metric=vvvPrice`),
             fetch(`https://venicestats.com/api/charts?period=${cp}&metric=diemPrice`),
@@ -389,14 +388,6 @@ export function startPriceWidget(
         if (!disposed) tui.requestRender();
       }
 
-      /**
-       * Fetch wallet exposure history and build a sparkline + change%.
-       * Maps user-facing periods to API granularity + point count:
-       *   1h  → granularity=1h,  last 20 pts
-       *   24h → granularity=1h,  last 24 pts
-       *   7d  → granularity=4h,  last 42 pts
-       *   30d → granularity=1d,  last 30 pts
-       */
       async function getExposureSparkline(period: "1h" | "24h" | "7d" | "30d" = "24h"): Promise<WalletExposure | null> {
         const periodMap: Record<string, { granularity: string; slice: number }> = {
           "1h":  { granularity: "1h", slice: 20 },
@@ -415,7 +406,6 @@ export function startPriceWidget(
         if (rawPts.length === 0) return null;
         const pts: number[] = rawPts
           .map((p: any) => (p.svvvUsd ?? 0) + (p.diemUsd ?? 0) + (p.vvvUsd ?? 0) + (p.cooldownUsd ?? 0));
-
         const tail = pts.slice(-slice);
         const sparkW = Math.min(tail.length, 20);
         const first = tail[0];
@@ -423,7 +413,6 @@ export function startPriceWidget(
         const changePct = first > 0 ? ((last - first) / first) * 100 : 0;
         const lastPt = rawPts[rawPts.length - 1];
         const cooldownVvv: number = lastPt?.cooldown ?? 0;
-
         return { sparkline: sparkline(tail, sparkW), currentExposure: last, changePct, cooldownVvv };
       }
 
@@ -436,28 +425,56 @@ export function startPriceWidget(
         if (!disposed) tui.requestRender();
       }
 
-      const fetchFns: Record<string, () => Promise<void>> = {
-        metrics: fetchMetrics,
-        wallet:  fetchWallet,
-        social:  fetchSocial,
-        markets: fetchMarkets,
-        charts:  fetchCharts,
-        billing: fetchBilling,
-      };
+      // ── Health sentinel ───────────────────────────────────────────────────
+      // Track the previous age per pipeline. When ageSec drops, the pipeline
+      // just updated and we should refetch its data.
+      const prevAge = new Map<string, number>();
 
-      const lastFetch = new Map<string, number>();
+      async function fetchHealth() {
+        try {
+          const res = await fetch(HEALTH_ENDPOINT);
+          if (!res.ok) { plog(`health error: ${res.status}`); return; }
+          const d = await res.json() as any;
+          const panels = getPanels();
 
-      // Wire the controller so agent_end can trigger an early billing refresh
-      controller.triggerBillingRefresh = () => {
-        lastFetch.set("billing", 0);
-      };
+          for (const p of d.pipelines ?? []) {
+            const name = p.name as string;
+            const age  = p.ageSec as number;
+            const prev = prevAge.get(name) ?? Infinity;
+
+            // Pipeline just refreshed (age dropped significantly)
+            if (prev !== Infinity && age < prev) {
+              plog(`pipeline ${name} updated (age ${prev}s → ${age}s)`);
+
+              // Decide which data to refetch based on pipeline
+              if (name === "prices") {
+                fetchMetrics();
+                fetchCharts();
+              } else if (name === "diem") {
+                fetchMetrics();
+              } else if (name === "staking") {
+                fetchMetrics();
+              } else if (name === "holders" && panels.includes("social")) {
+                fetchSocial();
+              } else if (name === "rewards" && panels.includes("wallet")) {
+                fetchWallet();
+              }
+            }
+
+            prevAge.set(name, age);
+          }
+        } catch (err) { plog(`health error: ${err}`); }
+      }
+
+      // ── Controller wiring ─────────────────────────────────────────────────
+      controller.triggerBillingRefresh = () => fetchBilling();
       controller.triggerChartsRefresh = () => {
         charts = null;
-        lastFetch.set("charts", 0);
+        fetchCharts();
       };
       controller.triggerExposureRefresh = () => {
         walletExposure = null;
-        lastFetch.set("wallet", 0);
+        fetchWalletHistory();
       };
 
       function clampBillingMs(): number {
@@ -467,37 +484,34 @@ export function startPriceWidget(
         );
       }
 
-      const initSrcs = getActiveSources(getPanels());
-      const initIntervals = computeIntervals(initSrcs, getBudget());
-      plog(`schedule (budget=${getBudget()}/min panels=${getPanels().join(",")}): ` +
-        [...initSrcs].map(s => `${s}=${((initIntervals.get(s) ?? 0) / 1000).toFixed(1)}s`).join(" | ")
-      );
-
-      for (const src of initSrcs) {
-        fetchFns[src]?.();
-        lastFetch.set(src, Date.now());
-      }
-      fetchFns.billing();
-      lastFetch.set("billing", Date.now());
+      // Initial fetch: get a baseline health snapshot, then fetch all data
+      // once so the widget isn't empty on startup.
+      plog("health/metrics init");
+      fetchHealth();
+      fetchMetrics();
+      fetchCharts();
+      if (getPanels().includes("wallet")) fetchWallet();
+      if (getPanels().includes("social")) fetchSocial();
+      if (getPanels().includes("markets")) fetchMarkets();
+      fetchBilling();
+      let lastHealthFetch = Date.now();
+      let lastBillingFetch = Date.now();
 
       const ticker = setInterval(() => {
         if (disposed) return;
-        const now        = Date.now();
-        const activeSrcs = getActiveSources(getPanels());
-        const intervals  = computeIntervals(activeSrcs, getBudget());
+        const now = Date.now();
 
-        for (const src of activeSrcs) {
-          const due = (lastFetch.get(src) ?? 0) + (intervals.get(src) ?? Math.ceil(60_000 / getBudget()));
-          if (now >= due) {
-            lastFetch.set(src, now);
-            fetchFns[src]?.();
-          }
+        // Health sentinel
+        if (now - lastHealthFetch >= HEALTH_POLL_MS) {
+          lastHealthFetch = now;
+          fetchHealth();
         }
 
-        const billingDue = (lastFetch.get("billing") ?? 0) + clampBillingMs();
-        if (now >= billingDue) {
-          lastFetch.set("billing", now);
-          fetchFns.billing();
+        // Billing (unchanged)
+        const billingDue = now - lastBillingFetch >= clampBillingMs();
+        if (billingDue) {
+          lastBillingFetch = now;
+          fetchBilling();
         }
       }, TICK_MS);
 
@@ -518,12 +532,15 @@ export function startPriceWidget(
             flash: { vvv: vvvFlash, diem: diemFlash },
           };
 
-          const activeStatsSrcs = [...getActiveSources(getPanels())].filter(s => s !== "billing");
+          const activeStatsSrcs = getPanels();
           const dataBySource: Record<string, unknown> = { metrics, wallet, social, markets, charts };
-          const hasAnyData = activeStatsSrcs.some(s => dataBySource[s] != null);
+          const hasAnyData = activeStatsSrcs.some(id => dataBySource[PANEL_REGISTRY[id]?.sources?.[0]] != null);
           const apiDown = activeStatsSrcs.length > 0
             && !hasAnyData
-            && activeStatsSrcs.every(s => (sourceErrors.get(s) ?? 0) >= 3);
+            && activeStatsSrcs.every(id => {
+              const s = (PANEL_REGISTRY[id]?.sources ?? [])[0];
+              return s ? (sourceErrors.get(s) ?? 0) >= 3 : true;
+            });
 
           if (apiDown) return [fitLine(theme.fg("dim", "venicestats.com unavailable, retrying\u2026"), width)];
 
@@ -532,13 +549,10 @@ export function startPriceWidget(
           const isNarrow = width < 80;
           const isWide = width >= 120;
           const hasRail = !isNarrow;
-          // 3 border chars: left │, middle │, right │
           const leftW = hasRail ? width - RAIL_W - 3 : width;
           const clock = renderClock(theme, getTimezone(), getTimeFormat(), billing);
-          const hasBilling = clock.usd !== "" || clock.diem !== "";
           const spc = "   ";
 
-          // Box-drawing characters
           const H = "\u2500", V = "\u2502";
           const dim = (s: string) => theme.fg("dim", s);
           const hdr = (s: string) => theme.fg("syntaxKeyword", s);
@@ -549,8 +563,8 @@ export function startPriceWidget(
           const borderBot    = dim("\u2514" + hLineL + "\u2534" + hLineR + "\u2518");
           const divBoth      = dim("\u251C" + hLineL + "\u253C" + hLineR + "\u2524");
           const divLeftOnly  = dim("\u251C" + hLineL + "\u2524");
-          const bL = dim(V);  // left/right border
-          const bM = dim(V);  // middle border
+          const bL = dim(V);
+          const bM = dim(V);
 
           function contentRow(left: string, right: string): string {
             return bL + fitLine(left, leftW) + bM + fitLine(right, RAIL_W) + bL;
@@ -559,33 +573,26 @@ export function startPriceWidget(
             return divLeftOnly + fitLine(right, RAIL_W) + bL;
           }
 
-          // ══════════════════════════════════════════════════════════════════
-          // LEFT COLUMN content — protocol + market intelligence
-          // ══════════════════════════════════════════════════════════════════
-
-          // ── PRICES (2 lines) ──
+          // ── PRICES ──
           let priceL1 = "", priceL2 = "";
           if (metrics) {
             const vvvColor  = vvvFlash  === "up" ? "success" : vvvFlash  === "down" ? "error" : "text";
             const diemColor = diemFlash === "up" ? "success" : diemFlash === "down" ? "error" : "text";
 
-
-
             const PERIOD_MS: Record<string, number> = { "1h": 3_600_000, "24h": 86_400_000, "7d": 604_800_000, "30d": 2_592_000_000 };
             const cp = getChartPeriod();
-            const trimToWindow = (pts: number[], ts: number[]): number[] => {
+
+            function trimToWindow(pts: number[], ts: number[]): number[] {
               if (!pts.length || !ts.length) return pts;
               const windowMs = PERIOD_MS[cp] ?? 86_400_000;
               const cutoff = ts[ts.length - 1] - windowMs;
               let idx = 0;
               for (let i = 0; i < ts.length; i++) { if (ts[i] >= cutoff) { idx = i; break; } }
               return pts.slice(idx);
-            };
+            }
 
-            const sparkW = isWide ? 12 : 8;
             const vvvSparkPts  = charts ? trimToWindow(charts.vvvPrices,  charts.vvvTimestamps)  : [];
             const diemSparkPts = charts ? trimToWindow(charts.diemPrices, charts.diemTimestamps) : [];
-
 
             let vvvChangePct: number;
             let diemChangePct: number;
@@ -608,6 +615,7 @@ export function startPriceWidget(
             }
             const vvvSparkColor = vvvChangePct  >= 0 ? "success" : "error";
             const diemSparkColor = diemChangePct >= 0 ? "success" : "error";
+            const sparkW = isWide ? 12 : 8;
             const vvvSpark  = vvvSparkPts.length >= 2
               ? theme.fg(vvvSparkColor,  sparkline(vvvSparkPts,  sparkW)) : "";
             const diemSpark = diemSparkPts.length >= 2
@@ -619,12 +627,12 @@ export function startPriceWidget(
               theme.fg(vvvColor, `$${metrics.vvvPrice.toFixed(4)}`) +
               (vvvSpark ? " " + vvvSpark : "") +
               theme.fg(vvvSparkColor, ` ${arrow(vvvChangePct)}`) +
-              dim(` ${getChartPeriod()}`);
+              dim(` ${cp}`);
             const diemP = hdr("DIEM ") +
               theme.fg(diemColor, `$${metrics.diemPrice.toFixed(2)}`) +
               (diemSpark ? " " + diemSpark : "") +
               theme.fg(diemSparkColor, ` ${arrow(diemChangePct)}`) +
-              dim(` ${getChartPeriod()}`);
+              dim(` ${cp}`);
 
             const vvvRank  = social?.marketCapRank     ? dim(" \u00B7 Ranked #") + theme.fg("text", String(social.marketCapRank))     : "";
             const diemRank = social?.diemMarketCapRank ? dim(" \u00B7 Ranked #") + theme.fg("text", String(social.diemMarketCapRank)) : "";
@@ -640,7 +648,7 @@ export function startPriceWidget(
             priceL1 = dim("Loading\u2026");
           }
 
-          // ── STAKING (header + 1 data line) ──
+          // ── STAKING ──
           let stakingHeader = hdr("VVV STAKING");
           let stakingData = "";
           const hasStaking = panels.includes("staking") || panels.includes("protocol");
@@ -673,7 +681,7 @@ export function startPriceWidget(
             if (visibleWidth(stakingData) > leftW) stakingData = staked;
           }
 
-          // ── DIEM (header + 1 data line) ──
+          // ── DIEM ──
           let diemHeader = hdr("DIEM ANALYTICS");
           let diemData = "";
           if (panels.includes("diem") && metrics) {
@@ -686,7 +694,7 @@ export function startPriceWidget(
               theme.fg("text", ` ${(metrics.diemStakeRatio * 100).toFixed(1)}%`);
           }
 
-          // ── 24H MARKET (header + 2 data lines) ──
+          // ── 24H MARKET ──
           let mktHeader = hdr("24H MARKET");
           let mktLine1 = "", mktLine2 = "";
           if (panels.includes("markets") && markets) {
@@ -721,27 +729,21 @@ export function startPriceWidget(
             if (pool && visibleWidth(mktLine2 + spc + pool) <= leftW) mktLine2 += spc + pool;
           }
 
-          // ══════════════════════════════════════════════════════════════════
-          // RIGHT RAIL content — system, balance, wallet + exposure
-          // ══════════════════════════════════════════════════════════════════
-
-          // ── SYSTEM (header + time·epoch on one line) ──
+          // ── RIGHT RAIL ──
           const systemHeader = hdr("SYSTEM");
           const systemLine = clock.epoch
             ? clock.time + dim(" \u00B7 ") + clock.epoch
             : clock.time;
 
-          // ── BALANCE (header + single combined line) ──
           const balanceHeader = hdr("BALANCE");
           let balanceLine = "";
-          if (hasBilling) {
+          if (clock.usd || clock.diem) {
             const parts: string[] = [];
             if (clock.usd) parts.push(clock.usd);
             if (clock.diem) parts.push(clock.diem);
             balanceLine = parts.join(dim(" \u00B7 "));
           }
 
-          // ── WALLET + PROTOCOL EXPOSURE (continuous block, up to 6 lines) ──
           const walletHeader = hdr("WALLET");
           let walletAddrLine = "";
           let walletPortLine = "";
@@ -753,13 +755,11 @@ export function startPriceWidget(
             const addr = getWallet();
             if (wallet && metrics) {
               const emoji = SIZE_EMOJI[wallet.sizeLabel] ?? "";
-              const roleColor = ROLE_COLOR[wallet.role] ?? "dim";
-              const venetianName =
-                (wallet.role ? (theme as any).fg(roleColor, wallet.role) : "") +
-                (wallet.sizeLabel ? " " + theme.fg("accent", wallet.sizeLabel) : "");
+              const roleColor = (ROLE_COLOR[wallet.role] ?? "dim") as import("@mariozechner/pi-coding-agent").ThemeColor;
               walletAddrLine =
-                (theme as any).fg(roleColor, fmtAddr(addr ?? "")) +
-                (venetianName ? " " + venetianName : "") +
+                theme.fg(roleColor, fmtAddr(addr ?? "")) +
+                (wallet.role ? " " + theme.fg(roleColor, wallet.role) : "") +
+                (wallet.sizeLabel ? " " + theme.fg("accent", wallet.sizeLabel) : "") +
                 (emoji ? " " + emoji : "");
               const cdVvv = walletExposure?.cooldownVvv ?? 0;
               walletPortLine =
@@ -772,9 +772,8 @@ export function startPriceWidget(
                 dim("\u23BF sVVV ") + theme.fg("text", fmtNum4(wallet.svvvBalance)) +
                 spc + dim("Pending ") + theme.fg("success", `${wallet.pendingRewards.toFixed(2)} VVV`);
               if (walletExposure) {
-                const cooldownVvv = walletExposure.cooldownVvv;
                 const liveExposure =
-                  (wallet.svvvBalance + wallet.vvvBalance + wallet.pendingRewards + cooldownVvv) * metrics.vvvPrice +
+                  (wallet.svvvBalance + wallet.vvvBalance + wallet.pendingRewards + walletExposure.cooldownVvv) * metrics.vvvPrice +
                   wallet.diemStaked * metrics.diemPrice;
                 const expDir = walletExposure.changePct >= 0 ? "success" : "error";
                 expLine =
@@ -790,34 +789,24 @@ export function startPriceWidget(
             }
           }
 
-          // ══════════════════════════════════════════════════════════════════
-          // ASSEMBLE GRID
-          // ══════════════════════════════════════════════════════════════════
+          // ── ASSEMBLE GRID ──
           const outRows: string[] = [];
           if (hasRail) {
             outRows.push(borderTop);
-            // PRICES / SYSTEM
             outRows.push(contentRow(priceL1, systemHeader));
             outRows.push(contentRow(priceL2, systemLine));
-            // ├──┼──┤
             outRows.push(divBoth);
-            // STAKING / BALANCE
             outRows.push(contentRow(stakingHeader, balanceHeader));
             outRows.push(contentRow(stakingData, balanceLine));
-            // ├──┼──┤
             outRows.push(divBoth);
-            // DIEM / WALLET (continuous right)
             outRows.push(contentRow(diemHeader, walletHeader));
             outRows.push(contentRow(diemData, walletAddrLine));
-            // ├──┤ left only — right continues
             outRows.push(divLeftRow(walletPortLine));
-            // 24H MARKET / wallet+exposure continues
             outRows.push(contentRow(mktHeader, walletSvvvLine));
             outRows.push(contentRow(mktLine1, expHeader));
             outRows.push(contentRow(mktLine2, expLine));
             outRows.push(borderBot);
           } else {
-            // Narrow mode: stack everything vertically, no box
             const lines = [priceL1, priceL2];
             if (stakingData) { lines.push(dim(H.repeat(width))); lines.push(stakingHeader, stakingData); }
             if (diemData)    { lines.push(dim(H.repeat(width))); lines.push(diemHeader, diemData); }

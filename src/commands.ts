@@ -47,81 +47,45 @@ export function registerVeniceStatsCommands(
     },
   });
 
-  // Combined polling command: /venice-stats-polling budget <N> | billing <N>
+  // Polling is now health-driven for venicestats.com (automatic). Billing interval
+  // is still configurable via /venice-stats-billing.
   pi.registerCommand("venice-stats-polling", {
-    description: "Manage polling rates: budget (venicestats.com) | billing (venice.ai API)",
+    description: "Show current polling status (venicestats.com polls on data updates automatically)",
     handler: async (args, ctx) => {
-      const parts = (args ?? "").trim().split(/\s+/).filter(Boolean);
-      const sub = parts[0]?.toLowerCase();
-      const val = parts[1]?.trim();
-
-      const BUDGET_DEFAULT = 30;
-      const BUDGET_MIN = 1;
-      const BUDGET_MAX = 59;
-
-      if (!sub) {
-        const bgt = getConfig().widgetBudget ?? BUDGET_DEFAULT;
-        const bgtSrc = getConfig().widgetBudget ? "(configured)" : "(default)";
-        const bill = getConfig().billingInterval ?? BILLING_INTERVAL_DEFAULT;
-        const billSrc = getConfig().billingInterval ? "(configured)" : "(default)";
-        notify(ctx,
-          `Polling settings:\n  Budget (venicestats.com): ${bgt} req/min ${bgtSrc} (range: ${BUDGET_MIN}\u2013${BUDGET_MAX})\n  Billing (venice.ai API): ${bill}s ${billSrc} (range: ${BILLING_INTERVAL_MIN}\u2013${BILLING_INTERVAL_MAX}s)\n\n` +
-          `Usage:\n  /venice-stats-polling budget <${BUDGET_MIN}-${BUDGET_MAX}|reset>  — venicestats.com request budget\n  /venice-stats-polling billing <${BILLING_INTERVAL_MIN}-${BILLING_INTERVAL_MAX}|reset>  — venice.ai billing poll interval`,
-          "info"
-        );
-        return;
-      }
-
-      if (sub === "budget") {
-        const current = getConfig().widgetBudget ?? BUDGET_DEFAULT;
-        if (!val) {
-          const src = getConfig().widgetBudget ? "(configured)" : "(default)";
-          notify(ctx, `Polling budget (venicestats.com): ${current} req/min ${src} (range: ${BUDGET_MIN}\u2013${BUDGET_MAX})`, "info");
-          return;
-        }
-        if (val === "reset") {
-          const { widgetBudget: _, ...rest } = getConfig();
-          save(ctx, rest);
-          notify(ctx, `Polling budget reset to default (${BUDGET_DEFAULT} req/min).`, "success");
-          return;
-        }
-        const n = Number(val);
-        if (!Number.isInteger(n) || n < BUDGET_MIN || n > BUDGET_MAX) {
-          notify(ctx, `Invalid budget "${val}". Provide a whole number between ${BUDGET_MIN} and ${BUDGET_MAX}.`, "error");
-          return;
-        }
-        save(ctx, { ...getConfig(), widgetBudget: n });
-        notify(ctx, `Polling budget set to ${n} req/min (was ${current}). Takes effect on the next tick.`, "success");
-        return;
-      }
-
-      if (sub === "billing") {
-        const current = getConfig().billingInterval ?? BILLING_INTERVAL_DEFAULT;
-        if (!val) {
-          const src = getConfig().billingInterval ? "(configured)" : "(default)";
-          notify(ctx, `Billing interval (venice.ai API): ${current}s ${src} (range: ${BILLING_INTERVAL_MIN}\u2013${BILLING_INTERVAL_MAX}s)`, "info");
-          return;
-        }
-        if (val === "reset") {
-          const { billingInterval: _, ...rest } = getConfig();
-          save(ctx, rest);
-          notify(ctx, `Billing interval reset to default (${BILLING_INTERVAL_DEFAULT}s).`, "success");
-          return;
-        }
-        const n = Number(val);
-        if (!Number.isFinite(n) || n < BILLING_INTERVAL_MIN || n > BILLING_INTERVAL_MAX) {
-          notify(ctx, `Invalid interval "${val}". Provide a number between ${BILLING_INTERVAL_MIN} and ${BILLING_INTERVAL_MAX} seconds.`, "error");
-          return;
-        }
-        save(ctx, { ...getConfig(), billingInterval: Math.round(n) });
-        notify(ctx, `Billing interval set to ${Math.round(n)}s (was ${current}s). Takes effect on the next tick.`, "success");
-        return;
-      }
-
+      const bill = getConfig().billingInterval ?? BILLING_INTERVAL_DEFAULT;
+      const billSrc = getConfig().billingInterval ? "(configured)" : "(default)";
       notify(ctx,
-        `Usage:\n  /venice-stats-polling budget <${BUDGET_MIN}-${BUDGET_MAX}|reset>  — venicestats.com request budget\n  /venice-stats-polling billing <${BILLING_INTERVAL_MIN}-${BILLING_INTERVAL_MAX}|reset>  — venice.ai billing poll interval`,
+        `Polling: health-driven (venicestats.com checks every ~90s, fetches on data update)\n  Billing (venice.ai API): ${bill}s ${billSrc} (range: ${BILLING_INTERVAL_MIN}\u2013${BILLING_INTERVAL_MAX}s)\n\n` +
+        `Usage:\n  /venice-stats-billing <${BILLING_INTERVAL_MIN}\u2013${BILLING_INTERVAL_MAX}|reset>  \u2014 venice.ai billing poll interval`,
         "info"
       );
+    },
+  });
+
+  // venice.ai billing interval (formerly /venice-stats-polling billing)
+  pi.registerCommand("venice-stats-billing", {
+    description: "Set venice.ai billing balance poll interval in seconds",
+    handler: async (args, ctx) => {
+      const val = (args ?? "").trim();
+      const current = getConfig().billingInterval ?? BILLING_INTERVAL_DEFAULT;
+      if (!val) {
+        const src = getConfig().billingInterval ? "(configured)" : "(default)";
+        notify(ctx, `Billing interval: ${current}s ${src} (range: ${BILLING_INTERVAL_MIN}\u2013${BILLING_INTERVAL_MAX}s)`, "info");
+        return;
+      }
+      if (val === "reset") {
+        const { billingInterval: _, ...rest } = getConfig();
+        save(ctx, rest);
+        notify(ctx, `Billing interval reset to default (${BILLING_INTERVAL_DEFAULT}s).`, "success");
+        return;
+      }
+      const n = Number(val);
+      if (!Number.isFinite(n) || n < BILLING_INTERVAL_MIN || n > BILLING_INTERVAL_MAX) {
+        notify(ctx, `Invalid interval "${val}". Provide a number between ${BILLING_INTERVAL_MIN} and ${BILLING_INTERVAL_MAX} seconds.`, "error");
+        return;
+      }
+      save(ctx, { ...getConfig(), billingInterval: Math.round(n) });
+      notify(ctx, `Billing interval set to ${Math.round(n)}s (was ${current}s).`, "success");
     },
   });
 
