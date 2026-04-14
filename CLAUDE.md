@@ -9,6 +9,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 node_modules/.bin/tsc --noEmit
 ```
 
+Before committing, sync `CLAUDE.md` and `README.md` with any command, config, or architecture changes made in the session.
+
 No tests, no bundler. Pi loads `src/index.ts` directly at runtime as an ESM extension.
 
 ## What this package is
@@ -31,10 +33,11 @@ src/state.ts      ← VeniceStatsConfig persistence via pi.appendEntry
 
 ### Polling
 
-A **single 500 ms master ticker** in `widget.ts` drives all data fetches. Two independent scheduling groups share the tick:
+Polling is **health-driven**. A lightweight `/api/health` check fires every ~90 s; each pipeline in the response carries an `ageSec` value. When `ageSec` drops below a per-pipeline stale threshold, the corresponding data fetch fires. This means data is only fetched when venicestats.com has actually updated it — not on a fixed timer.
 
-1. **venicestats.com sources** — budget-driven. `SOURCE_WEIGHTS` (in `panels.ts`) define relative priority; `computeIntervals()` converts the req/min budget into per-source intervals that rebalance whenever the active panel set changes.
-2. **venice.ai `/billing/balance`** — independent fixed interval configured via `/venice-billing-interval`. Uses `VENICE_ADMIN_API_KEY`.
+`STALE_THRESHOLD` in `widget.ts` defines the per-pipeline thresholds (e.g. `prices: 180`, `diem: 300`, `staking: 300`).
+
+The **venice.ai `/billing/balance`** poller is independent: max 1 req/min, also triggered after each agent loop completes. Uses `VENICE_ADMIN_API_KEY`.
 
 ### Panels
 
@@ -46,7 +49,7 @@ Returning `string[]` emits multiple rows. `PANEL_REGISTRY` is the canonical list
 
 ### Multi-session lock
 
-Only one pi session may poll at a time (venicestats.com rate limit: 60 req/min per IP). A PID file at `~/.pi/venice-stats.pid` is the lock. `isPiProcess()` in `widget.ts` validates the PID against `/proc/<pid>/cmdline` on Linux/WSL to handle PID reuse after a crash. `/venice-widget claim` provides the user escape hatch.
+Only one pi session may poll at a time (venicestats.com rate limit: 60 req/min per IP). A PID file at `$PI_CONFIG_DIR/venice-stats.pid` is the lock. `isPiProcess()` in `widget.ts` validates the PID against `/proc/<pid>/cmdline` on Linux/WSL to handle PID reuse after a crash. If a stale lock prevents the widget from starting, the user should restart Pi.
 
 ### Theme colors
 
@@ -54,11 +57,22 @@ Only use named colors from the pi-tui theme: `text`, `dim`, `accent`, `muted`, `
 
 ### State persistence
 
-`VeniceStatsConfig` (wallet address, panel layout, budget, timezone, time format, billing interval) is persisted via `pi.appendEntry("venice-stats-config", config)`. `loadConfig` replays the session log and takes the latest entry. Widget config never touches pi-venice's state.
+`VeniceStatsConfig` (wallet address, panel layout, timezone, time format, token/cooldown/exposure periods, preset) is persisted via `pi.appendEntry("venice-stats-config", config)`. `loadConfig` replays the session log and takes the latest entry. Config survives package updates because it lives in Pi's session log, not in extension files. Widget config never touches pi-venice's state.
 
 ### Environment variables
 
 | Variable | Purpose |
 |----------|---------|
-| `VENICE_WALLET` | Wallet address fallback (if not set via `/venice-wallet`) |
+| `VENICE_WALLET` | Wallet address fallback (if not set via `/venice-stats-wallet`) |
 | `VENICE_ADMIN_API_KEY` | Enables billing balance overlay in the clock |
+| `XDG_CONFIG_HOME` | If set, Pi config dir resolves to `$XDG_CONFIG_HOME/.pi` instead of `~/.pi` |
+
+### Config directory
+
+Lock file and log are written to `$PI_CONFIG_DIR` (defined in `widget.ts`):
+- `$XDG_CONFIG_HOME/.pi` if `XDG_CONFIG_HOME` is set
+- `~/.pi` otherwise
+
+### Slash commands
+
+Full command reference: [`VENICE_STATS_COMMANDS.md`](VENICE_STATS_COMMANDS.md)

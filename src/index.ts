@@ -1,5 +1,5 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { DEFAULT_PANELS, detectTimezone, BILLING_INTERVAL_DEFAULT } from "./panels.ts";
+import { DEFAULT_PANELS, detectTimezone } from "./panels.ts";
 import { startPriceWidget, stopPriceWidget, tryAcquireWidgetLock, releaseWidgetLock } from "./widget.ts";
 import type { WidgetController } from "./widget.ts";
 import { loadConfig, persistConfig, defaultConfig } from "./state.ts";
@@ -20,12 +20,12 @@ export default function (pi: ExtensionAPI) {
       ctx,
       () => config.walletAddress ?? process.env["VENICE_WALLET"],
       () => config.widgetPanels ?? DEFAULT_PANELS,
-      () => config.widgetBudget ?? 30,
       () => config.widgetTimezone ?? detectTimezone(),
       () => config.widgetTimeFormat ?? "24h",
-      () => config.billingInterval ?? BILLING_INTERVAL_DEFAULT,
-      () => config.chartPeriod ?? "24h",
+      () => config.tokenPeriod ?? "24h",
+      () => config.cooldownPeriod ?? "7d",
       () => config.exposurePeriod ?? "30d",
+      () => config.preset ?? "max",
     );
   };
 
@@ -40,7 +40,7 @@ export default function (pi: ExtensionAPI) {
       if (ctx.hasUI) {
         ctx.ui.notify(
           "Venice stats widget skipped — another pi session is already polling venicestats.com.\n" +
-          "If that session is no longer running, use /venice-widget claim to take over.",
+          "If that session is no longer running, restart Pi to take over.",
           "info",
         );
       }
