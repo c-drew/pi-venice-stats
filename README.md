@@ -87,18 +87,6 @@ DIEM precision scales dynamically:
 
 USD always shows 2 decimal places. When USD or DIEM balance rounds to zero, that value turns red.
 
-## Tracking your wallet
-
-```bash
-export VENICE_WALLET=0x<your-address>
-```
-
-Or set from inside the TUI — persisted across sessions and package updates:
-
-```text
-/venice-stats-wallet 0x<your-address>
-```
-
 ## Dashboard panels
 
 | id | Label | What it shows | Data source |
