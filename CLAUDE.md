@@ -49,7 +49,7 @@ Returning `string[]` emits multiple rows. `PANEL_REGISTRY` is the canonical list
 
 ### Multi-session lock
 
-Only one pi session may poll at a time (venicestats.com rate limit: 60 req/min per IP). A PID file at `~/.pi/venice-stats.pid` is the lock. `isPiProcess()` in `widget.ts` validates the PID against `/proc/<pid>/cmdline` on Linux/WSL to handle PID reuse after a crash. `/venice-widget claim` provides the user escape hatch.
+Only one pi session may poll at a time (venicestats.com rate limit: 60 req/min per IP). A PID file at `$PI_CONFIG_DIR/venice-stats.pid` is the lock. `isPiProcess()` in `widget.ts` validates the PID against `/proc/<pid>/cmdline` on Linux/WSL to handle PID reuse after a crash. If a stale lock prevents the widget from starting, the user should restart Pi.
 
 ### Theme colors
 
@@ -57,11 +57,22 @@ Only use named colors from the pi-tui theme: `text`, `dim`, `accent`, `muted`, `
 
 ### State persistence
 
-`VeniceStatsConfig` (wallet address, panel layout, timezone, time format, token/cooldown/exposure periods) is persisted via `pi.appendEntry("venice-stats-config", config)`. `loadConfig` replays the session log and takes the latest entry. Widget config never touches pi-venice's state.
+`VeniceStatsConfig` (wallet address, panel layout, timezone, time format, token/cooldown/exposure periods, preset) is persisted via `pi.appendEntry("venice-stats-config", config)`. `loadConfig` replays the session log and takes the latest entry. Config survives package updates because it lives in Pi's session log, not in extension files. Widget config never touches pi-venice's state.
 
 ### Environment variables
 
 | Variable | Purpose |
 |----------|---------|
-| `VENICE_WALLET` | Wallet address fallback (if not set via `/venice-wallet`) |
+| `VENICE_WALLET` | Wallet address fallback (if not set via `/venice-stats-wallet`) |
 | `VENICE_ADMIN_API_KEY` | Enables billing balance overlay in the clock |
+| `XDG_CONFIG_HOME` | If set, Pi config dir resolves to `$XDG_CONFIG_HOME/.pi` instead of `~/.pi` |
+
+### Config directory
+
+Lock file and log are written to `$PI_CONFIG_DIR` (defined in `widget.ts`):
+- `$XDG_CONFIG_HOME/.pi` if `XDG_CONFIG_HOME` is set
+- `~/.pi` otherwise
+
+### Slash commands
+
+Full command reference: [`VENICE_STATS_COMMANDS.md`](VENICE_STATS_COMMANDS.md)

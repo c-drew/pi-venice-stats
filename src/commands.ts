@@ -1,6 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { detectTimezone } from "./panels.ts";
-import { tryClaimStaleWidgetLock, stopPriceWidget } from "./widget.ts";
 import type { WidgetController } from "./widget.ts";
 import { persistConfig } from "./state.ts";
 import type { VeniceStatsConfig } from "./state.ts";
@@ -44,27 +43,6 @@ export function registerVeniceStatsCommands(
       }
       save(ctx, { ...getConfig(), walletAddress: addr });
       notify(ctx, `Wallet set: ${addr}`, "success");
-    },
-  });
-
-  // Polling status + venice.ai billing info
-  pi.registerCommand("venice-stats-health", {
-    description: "Show polling status for venicestats.com and venice.ai billing",
-    handler: async (args, ctx) => {
-      const adminKey = process.env["VENICE_ADMIN_API_KEY"];
-      if (!adminKey) {
-        notify(ctx,
-          `Polling: health-driven (venicestats.com checks every ~90s, fetches on data update)\n\n` +
-          `Billing: VENICE_ADMIN_API_KEY not set \u2014 no balance tracking`,
-          "info"
-        );
-        return;
-      }
-      notify(ctx,
-        `Polling: health-driven (venicestats.com checks every ~90s, fetches on data update)\n\n` +
-        `Billing: venice.ai /billing/balance\n  \u2022 Rate: 1 req/min max\n  \u2022 Also refreshes after each agent loop completes\n  \u2022 Endpoint: https://api.venice.ai/api/v1/billing/balance\n  \u2022 Last hit: shown on widget clock (US$ + DIEM balance)`,
-        "info"
-      );
     },
   });
 
@@ -255,24 +233,30 @@ export function registerVeniceStatsCommands(
     },
   });
 
-  pi.registerCommand("venice-stats-widget", {
-    description: "Manage the stats widget lock: /venice-stats-widget claim \u2014 take over when the previous session is gone",
+  pi.registerCommand("venice-stats-preset", {
+    description: "Switch dashboard preset: /venice-stats-preset [off|usage|wallet|max]",
     handler: async (args, ctx) => {
-      const sub = (args ?? "").trim();
-      if (sub === "claim") {
-        if (tryClaimStaleWidgetLock()) {
-          stopPriceWidget(ctx);
-          startWidget(ctx);
-          notify(ctx, "Stats widget claimed \u2014 polling started in this session.", "success");
-        } else {
-          notify(ctx, "Another pi session is still running and holds the widget lock.\nClose it first, then run /venice-stats-widget claim again.", "error");
-        }
+      const val = (args ?? "").trim().toLowerCase();
+      const valid = ["off", "usage", "wallet", "max"];
+      if (!val) {
+        const current = getConfig().preset ?? "max";
+        notify(ctx,
+          `Preset: ${current}\nAvailable: ${valid.join(", ")}\n\n` +
+          `  off    \u2014 hide widget entirely\n` +
+          `  usage  \u2014 minimal 2-line clock + balance\n` +
+          `  wallet \u2014 prices + wallet summary\n` +
+          `  max    \u2014 full dashboard (default)`,
+          "info"
+        );
         return;
       }
-      notify(ctx,
-        "Usage: /venice-stats-widget claim \u2014 force-take the widget lock when the previous session is gone.",
-        "info"
-      );
+      if (!valid.includes(val)) {
+        notify(ctx, `Invalid preset "${val}". Use: ${valid.join(", ")}`, "error");
+        return;
+      }
+      save(ctx, { ...getConfig(), preset: val as "off" | "usage" | "wallet" | "max" });
+      notify(ctx, `Preset set to "${val}".`, "success");
     },
   });
+
 }
