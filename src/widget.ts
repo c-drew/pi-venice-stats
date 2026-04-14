@@ -52,7 +52,13 @@ import {
 
 const VENICE_API_BASE  = "https://api.venice.ai/api/v1";
 const STATS_WIDGET_KEY = "venice-stats";
-const STATS_LOG        = join(homedir(), ".pi", "venice-stats.log");
+
+// Respect XDG_CONFIG_HOME if set (e.g. ~/.config/.pi), fall back to ~/.pi
+const PI_CONFIG_DIR = process.env["XDG_CONFIG_HOME"]
+  ? join(process.env["XDG_CONFIG_HOME"], ".pi")
+  : join(homedir(), ".pi");
+
+const STATS_LOG        = join(PI_CONFIG_DIR, "venice-stats.log");
 const FLASH_MS         = 400;
 const TICK_MS           = 500;
 
@@ -81,7 +87,7 @@ const STALE_THRESHOLD: Record<string, number> = {
 // Multi-session lock
 // ---------------------------------------------------------------------------
 
-const WIDGET_LOCK = join(homedir(), ".pi", "venice-stats.pid");
+const WIDGET_LOCK = join(PI_CONFIG_DIR, "venice-stats.pid");
 let _lockOwned = false;
 
 function isPiProcess(pid: number): boolean {
@@ -154,6 +160,7 @@ export function startPriceWidget(
   getTokenPeriod:    () => "1h" | "24h" | "7d" | "30d",
   getCooldownPeriod:  () => "24h" | "7d" | "30d",
   getExposurePeriod: () => "1h" | "24h" | "7d" | "30d",
+  getPreset:         () => "off" | "usage" | "wallet" | "max",
 ): WidgetController {
   const controller: WidgetController = {
     triggerBillingRefresh:   () => {},
@@ -603,6 +610,28 @@ export function startPriceWidget(
             return divLeftOnly + fitLine(right, RAIL_W) + bL;
           }
 
+          const preset = getPreset();
+
+          // ── PRESET: off ──
+          if (preset === "off") return [];
+
+          // ── PRESET: usage ──
+          if (preset === "usage") {
+            const rightAlign = (s: string): string => {
+              const w = visibleWidth(s);
+              return w >= width ? s : " ".repeat(width - w) + s;
+            };
+            const sysLine = clock.epoch
+              ? clock.time + dim(" \u00B7 ") + clock.epoch
+              : clock.time;
+            const lines: string[] = [rightAlign(sysLine)];
+            if (clock.usd || clock.diem) {
+              const parts = [clock.usd, clock.diem].filter(Boolean);
+              lines.push(rightAlign(parts.join(dim(" \u00B7 "))));
+            }
+            return lines;
+          }
+
           // ── PRICES ──
           let priceL1 = "", priceL2 = "";
           if (metrics) {
@@ -820,6 +849,53 @@ export function startPriceWidget(
             } else {
               walletAddrLine = dim("/venice-wallet <0x\u2026>");
             }
+          }
+
+          // ── PRESET: wallet ──
+          if (preset === "wallet") {
+            let walletL1 = hdr("WALLET") + "  ";
+            let walletL2 = "";
+            const wAddr = getWallet();
+            if (wallet && metrics) {
+              const emoji      = SIZE_EMOJI[wallet.sizeLabel] ?? "";
+              const roleColor  = (ROLE_COLOR[wallet.role] ?? "dim") as import("@mariozechner/pi-coding-agent").ThemeColor;
+              const cdVvv      = walletExposure?.cooldownVvv ?? 0;
+              walletL1 +=
+                theme.fg(roleColor, fmtAddr(wAddr ?? "")) +
+                (wallet.role      ? " " + theme.fg(roleColor, wallet.role)           : "") +
+                (wallet.sizeLabel ? " " + theme.fg("accent",  wallet.sizeLabel)      : "") +
+                (emoji            ? " " + emoji                                       : "") +
+                "   " + dim("Rank #") + theme.fg("text", String(wallet.rank)) +
+                dim("/" + fmtK(wallet.totalVenetians));
+              walletL2 =
+                dim("\u23BF Portfolio ") + theme.fg("text", fmtUSD(
+                  (wallet.svvvBalance + wallet.vvvBalance + wallet.pendingRewards + cdVvv) * metrics.vvvPrice
+                )) + spc +
+                dim("sVVV ") + theme.fg("text", fmtNum4(wallet.svvvBalance)) + spc +
+                dim("Pending ") + theme.fg("success", `${wallet.pendingRewards.toFixed(2)} VVV`);
+            } else if (wAddr) {
+              walletL1 += dim(`Loading ${fmtAddr(wAddr)}\u2026`);
+            } else {
+              walletL1 += dim("/venice-wallet <0x\u2026>");
+            }
+
+            const outRows: string[] = [];
+            if (hasRail) {
+              outRows.push(borderTop);
+              outRows.push(contentRow(priceL1, systemHeader));
+              outRows.push(contentRow(priceL2, systemLine));
+              outRows.push(divBoth);
+              outRows.push(contentRow(walletL1, balanceHeader));
+              outRows.push(contentRow(walletL2, balanceLine));
+              outRows.push(borderBot);
+            } else {
+              const lines = [priceL1, priceL2, dim(H.repeat(width)), walletL1];
+              if (walletL2) lines.push(walletL2);
+              const clockParts = [clock.time, clock.epoch, clock.usd, clock.diem].filter(Boolean);
+              if (clockParts.length) { lines.push(dim(H.repeat(width))); lines.push(clockParts.join("   ")); }
+              for (const l of lines) outRows.push(fitLine(l, width));
+            }
+            return outRows;
           }
 
           // ── ASSEMBLE GRID ──

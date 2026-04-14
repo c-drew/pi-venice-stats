@@ -13,6 +13,8 @@ export interface VeniceStatsConfig {
   cooldownPeriod?: "24h" | "7d" | "30d";
   /** Protocol exposure period. Default: 30d. */
   exposurePeriod?: "1h" | "24h" | "7d" | "30d";
+  /** Dashboard layout preset. Default: max. */
+  preset?: "off" | "usage" | "wallet" | "max";
 }
 
 export function defaultConfig(): VeniceStatsConfig {
@@ -46,6 +48,8 @@ export function loadConfig(ctx: ExtensionContext): VeniceStatsConfig {
   else if (validTokenPeriods.includes(latest.chartPeriod)) config.tokenPeriod = latest.chartPeriod;
   if (validCooldownPeriods.includes(latest.cooldownPeriod)) config.cooldownPeriod = latest.cooldownPeriod;
   if (validExposurePeriods.includes(latest.exposurePeriod)) config.exposurePeriod = latest.exposurePeriod;
+  const validPresets = ["off", "usage", "wallet", "max"];
+  if (validPresets.includes(latest.preset)) config.preset = latest.preset;
 
   return config;
 }

@@ -25,6 +25,7 @@ export default function (pi: ExtensionAPI) {
       () => config.tokenPeriod ?? "24h",
       () => config.cooldownPeriod ?? "7d",
       () => config.exposurePeriod ?? "30d",
+      () => config.preset ?? "max",
     );
   };
 
@@ -39,7 +40,7 @@ export default function (pi: ExtensionAPI) {
       if (ctx.hasUI) {
         ctx.ui.notify(
           "Venice stats widget skipped — another pi session is already polling venicestats.com.\n" +
-          "If that session is no longer running, use /venice-widget claim to take over.",
+          "If that session is no longer running, restart Pi to take over.",
           "info",
         );
       }
