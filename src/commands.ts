@@ -1,6 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
-import { detectTimezone, BILLING_INTERVAL_DEFAULT, BILLING_INTERVAL_MIN, BILLING_INTERVAL_MAX } from "./panels.ts";
-import { tryClaimStaleWidgetLock, stopPriceWidget } from "./widget.ts";
+import { detectTimezone } from "./panels.ts";
 import type { WidgetController } from "./widget.ts";
 import { persistConfig } from "./state.ts";
 import type { VeniceStatsConfig } from "./state.ts";
@@ -47,79 +46,112 @@ export function registerVeniceStatsCommands(
     },
   });
 
-  // Combined polling command: /venice-stats-polling budget <N> | billing <N>
-  pi.registerCommand("venice-stats-polling", {
-    description: "Manage polling rates: budget (venicestats.com) | billing (venice.ai API)",
+  // Period command: /venice-stats-period [token|cooldown|exposure [<period>|reset]
+  pi.registerCommand("venice-stats-period", {
+    description: "Manage sparkline periods: /venice-stats-period [token|cooldown|exposure [<period>|reset]]",
     handler: async (args, ctx) => {
       const parts = (args ?? "").trim().split(/\s+/).filter(Boolean);
       const sub = parts[0]?.toLowerCase();
-      const val = parts[1]?.trim();
+      const val = parts[1]?.toLowerCase();
 
-      const BUDGET_DEFAULT = 30;
-      const BUDGET_MIN = 1;
-      const BUDGET_MAX = 59;
+      const validTokenPeriods     = ["1h", "24h", "7d", "30d"];
+      const validCooldownPeriods   = ["24h", "7d", "30d"];
+      const validExposurePeriods  = ["1h", "24h", "7d", "30d"];
 
       if (!sub) {
-        const bgt = getConfig().widgetBudget ?? BUDGET_DEFAULT;
-        const bgtSrc = getConfig().widgetBudget ? "(configured)" : "(default)";
-        const bill = getConfig().billingInterval ?? BILLING_INTERVAL_DEFAULT;
-        const billSrc = getConfig().billingInterval ? "(configured)" : "(default)";
+        // Show all periods
+        const token = getConfig().tokenPeriod ?? "24h";
+        const cool  = getConfig().cooldownPeriod ?? "7d";
+        const exp   = getConfig().exposurePeriod ?? "30d";
         notify(ctx,
-          `Polling settings:\n  Budget (venicestats.com): ${bgt} req/min ${bgtSrc} (range: ${BUDGET_MIN}\u2013${BUDGET_MAX})\n  Billing (venice.ai API): ${bill}s ${billSrc} (range: ${BILLING_INTERVAL_MIN}\u2013${BILLING_INTERVAL_MAX}s)\n\n` +
-          `Usage:\n  /venice-stats-polling budget <${BUDGET_MIN}-${BUDGET_MAX}|reset>  — venicestats.com request budget\n  /venice-stats-polling billing <${BILLING_INTERVAL_MIN}-${BILLING_INTERVAL_MAX}|reset>  — venice.ai billing poll interval`,
+          `Sparkline periods:\n  Token:     ${token}\n  Cooldown: ${cool}\n  Exposure: ${exp}\n\n` +
+          `Usage:\n  /venice-stats-period reset\n  /venice-stats-period token <1h|24h|7d|30d|reset>\n  /venice-stats-period cooldown <24h|7d|30d|reset>\n  /venice-stats-period exposure <1h|24h|7d|30d|reset>`,
           "info"
         );
         return;
       }
 
-      if (sub === "budget") {
-        const current = getConfig().widgetBudget ?? BUDGET_DEFAULT;
-        if (!val) {
-          const src = getConfig().widgetBudget ? "(configured)" : "(default)";
-          notify(ctx, `Polling budget (venicestats.com): ${current} req/min ${src} (range: ${BUDGET_MIN}\u2013${BUDGET_MAX})`, "info");
-          return;
-        }
-        if (val === "reset") {
-          const { widgetBudget: _, ...rest } = getConfig();
-          save(ctx, rest);
-          notify(ctx, `Polling budget reset to default (${BUDGET_DEFAULT} req/min).`, "success");
-          return;
-        }
-        const n = Number(val);
-        if (!Number.isInteger(n) || n < BUDGET_MIN || n > BUDGET_MAX) {
-          notify(ctx, `Invalid budget "${val}". Provide a whole number between ${BUDGET_MIN} and ${BUDGET_MAX}.`, "error");
-          return;
-        }
-        save(ctx, { ...getConfig(), widgetBudget: n });
-        notify(ctx, `Polling budget set to ${n} req/min (was ${current}). Takes effect on the next tick.`, "success");
+      if (sub === "reset") {
+        const { tokenPeriod: _t, cooldownPeriod: _c, exposurePeriod: _e, ...rest } = getConfig();
+        save(ctx, rest);
+        notify(ctx, "All sparkline periods reset to defaults (token 24h, cooldown 7d, exposure 30d).", "success");
+        getController?.()?.triggerTokenRefresh();
+        getController?.()?.triggerCooldownRefresh();
+        getController?.()?.triggerExposureRefresh();
         return;
       }
 
-      if (sub === "billing") {
-        const current = getConfig().billingInterval ?? BILLING_INTERVAL_DEFAULT;
+      if (sub === "token") {
+        const current = getConfig().tokenPeriod ?? "24h";
         if (!val) {
-          const src = getConfig().billingInterval ? "(configured)" : "(default)";
-          notify(ctx, `Billing interval (venice.ai API): ${current}s ${src} (range: ${BILLING_INTERVAL_MIN}\u2013${BILLING_INTERVAL_MAX}s)`, "info");
+          notify(ctx, `Token period: ${current}\nValid: ${validTokenPeriods.join(", ")}`, "info");
           return;
         }
         if (val === "reset") {
-          const { billingInterval: _, ...rest } = getConfig();
+          const { tokenPeriod: _, ...rest } = getConfig();
           save(ctx, rest);
-          notify(ctx, `Billing interval reset to default (${BILLING_INTERVAL_DEFAULT}s).`, "success");
+          notify(ctx, "Token period reset to default (24h).", "success");
+          getController?.()?.triggerTokenRefresh();
           return;
         }
-        const n = Number(val);
-        if (!Number.isFinite(n) || n < BILLING_INTERVAL_MIN || n > BILLING_INTERVAL_MAX) {
-          notify(ctx, `Invalid interval "${val}". Provide a number between ${BILLING_INTERVAL_MIN} and ${BILLING_INTERVAL_MAX} seconds.`, "error");
+        if (!validTokenPeriods.includes(val)) {
+          notify(ctx, `Invalid token period "${val}". Use one of: ${validTokenPeriods.join(", ")}`, "error");
           return;
         }
-        save(ctx, { ...getConfig(), billingInterval: Math.round(n) });
-        notify(ctx, `Billing interval set to ${Math.round(n)}s (was ${current}s). Takes effect on the next tick.`, "success");
+        save(ctx, { ...getConfig(), tokenPeriod: val as any });
+        getController?.()?.triggerTokenRefresh();
+        notify(ctx, `Token period set to ${val}. Refreshing\u2026`, "success");
+        return;
+      }
+
+      if (sub === "cooldown") {
+        const current = getConfig().cooldownPeriod ?? "7d";
+        if (!val) {
+          notify(ctx, `Cooldown period: ${current}\nValid: ${validCooldownPeriods.join(", ")}`, "info");
+          return;
+        }
+        if (val === "reset") {
+          const { cooldownPeriod: _, ...rest } = getConfig();
+          save(ctx, rest);
+          notify(ctx, "Cooldown period reset to default (7d).", "success");
+          getController?.()?.triggerCooldownRefresh();
+          return;
+        }
+        if (!validCooldownPeriods.includes(val)) {
+          notify(ctx, `Invalid cooldown period "${val}". Use one of: ${validCooldownPeriods.join(", ")}`, "error");
+          return;
+        }
+        save(ctx, { ...getConfig(), cooldownPeriod: val as any });
+        getController?.()?.triggerCooldownRefresh();
+        notify(ctx, `Cooldown period set to ${val}. Refreshing\u2026`, "success");
+        return;
+      }
+
+      if (sub === "exposure") {
+        const current = getConfig().exposurePeriod ?? "30d";
+        if (!val) {
+          notify(ctx, `Exposure period: ${current}\nValid: ${validExposurePeriods.join(", ")}`, "info");
+          return;
+        }
+        if (val === "reset") {
+          const { exposurePeriod: _, ...rest } = getConfig();
+          save(ctx, rest);
+          notify(ctx, "Exposure period reset to default (30d).", "success");
+          getController?.()?.triggerExposureRefresh();
+          return;
+        }
+        if (!validExposurePeriods.includes(val)) {
+          notify(ctx, `Invalid exposure period "${val}". Use one of: ${validExposurePeriods.join(", ")}`, "error");
+          return;
+        }
+        save(ctx, { ...getConfig(), exposurePeriod: val as any });
+        getController?.()?.triggerExposureRefresh();
+        notify(ctx, `Exposure period set to ${val}. Refreshing\u2026`, "success");
         return;
       }
 
       notify(ctx,
-        `Usage:\n  /venice-stats-polling budget <${BUDGET_MIN}-${BUDGET_MAX}|reset>  — venicestats.com request budget\n  /venice-stats-polling billing <${BILLING_INTERVAL_MIN}-${BILLING_INTERVAL_MAX}|reset>  — venice.ai billing poll interval`,
+        `Usage:\n  /venice-stats-period token <1h|24h|7d|30d|reset>\n  /venice-stats-period cooldown <24h|7d|30d|reset>\n  /venice-stats-period exposure <1h|24h|7d|30d|reset>`,
         "info"
       );
     },
@@ -201,101 +233,30 @@ export function registerVeniceStatsCommands(
     },
   });
 
-  // Combined period command: /venice-stats-period chart <1h|24h|7d|30d> | exposure <1h|24h|7d|30d> | reset
-  pi.registerCommand("venice-stats-period", {
-    description: "Manage sparkline periods: /venice-stats-period chart <1h|24h|7d|30d|reset> | exposure <1h|24h|7d|30d|reset>",
+  pi.registerCommand("venice-stats-preset", {
+    description: "Switch dashboard preset: /venice-stats-preset [off|usage|wallet|max]",
     handler: async (args, ctx) => {
-      const parts = (args ?? "").trim().split(/\s+/).filter(Boolean);
-      const sub = parts[0]?.toLowerCase();
-      const val = parts[1]?.toLowerCase();
-      const validPeriods = ["1h", "24h", "7d", "30d"];
-
-      if (!sub) {
-        const chart = getConfig().chartPeriod ?? "24h";
-        const chartSrc = getConfig().chartPeriod ? "(configured)" : "(default)";
-        const exp = getConfig().exposurePeriod ?? "30d";
-        const expSrc = getConfig().exposurePeriod ? "(configured)" : "(default)";
+      const val = (args ?? "").trim().toLowerCase();
+      const valid = ["off", "usage", "wallet", "max"];
+      if (!val) {
+        const current = getConfig().preset ?? "max";
         notify(ctx,
-          `Sparkline periods:\n  Chart: ${chart} ${chartSrc}\n  Exposure: ${exp} ${expSrc}\n\n` +
-          `Usage:\n  /venice-stats-period chart <1h|24h|7d|30d|reset>\n  /venice-stats-period exposure <1h|24h|7d|30d|reset>`,
+          `Preset: ${current}\nAvailable: ${valid.join(", ")}\n\n` +
+          `  off    \u2014 hide widget entirely\n` +
+          `  usage  \u2014 minimal 2-line clock + balance\n` +
+          `  wallet \u2014 prices + wallet summary\n` +
+          `  max    \u2014 full dashboard (default)`,
           "info"
         );
         return;
       }
-
-      if (sub === "chart") {
-        const current = getConfig().chartPeriod ?? "24h";
-        if (!val) {
-          const src = getConfig().chartPeriod ? "(configured)" : "(default)";
-          notify(ctx, `Chart period: ${current} ${src}\nValid: ${validPeriods.join(", ")}`, "info");
-          return;
-        }
-        if (val === "reset") {
-          const { chartPeriod: _, ...rest } = getConfig();
-          save(ctx, rest);
-          notify(ctx, `Chart period reset to default (24h).`, "success");
-          getController?.()?.triggerChartsRefresh();
-          return;
-        }
-        if (!validPeriods.includes(val)) {
-          notify(ctx, `Invalid period "${val}". Use one of: ${validPeriods.join(", ")}`, "error");
-          return;
-        }
-        save(ctx, { ...getConfig(), chartPeriod: val as any });
-        getController?.()?.triggerChartsRefresh();
-        notify(ctx, `Chart period set to ${val} (was ${current}). Refreshing\u2026`, "success");
+      if (!valid.includes(val)) {
+        notify(ctx, `Invalid preset "${val}". Use: ${valid.join(", ")}`, "error");
         return;
       }
-
-      if (sub === "exposure" || sub === "exp") {
-        const current = getConfig().exposurePeriod ?? "30d";
-        if (!val) {
-          const src = getConfig().exposurePeriod ? "(configured)" : "(default)";
-          notify(ctx, `Exposure period: ${current} ${src}\nValid: ${validPeriods.join(", ")}`, "info");
-          return;
-        }
-        if (val === "reset") {
-          const { exposurePeriod: _, ...rest } = getConfig();
-          save(ctx, rest);
-          notify(ctx, `Exposure period reset to default (30d).`, "success");
-          getController?.()?.triggerExposureRefresh();
-          return;
-        }
-        if (!validPeriods.includes(val)) {
-          notify(ctx, `Invalid period "${val}". Use one of: ${validPeriods.join(", ")}`, "error");
-          return;
-        }
-        save(ctx, { ...getConfig(), exposurePeriod: val as any });
-        getController?.()?.triggerExposureRefresh();
-        notify(ctx, `Exposure period set to ${val} (was ${current}). Refreshing\u2026`, "success");
-        return;
-      }
-
-      notify(ctx,
-        `Usage:\n  /venice-stats-period chart <1h|24h|7d|30d|reset>\n  /venice-stats-period exposure <1h|24h|7d|30d|reset>`,
-        "info"
-      );
+      save(ctx, { ...getConfig(), preset: val as "off" | "usage" | "wallet" | "max" });
+      notify(ctx, `Preset set to "${val}".`, "success");
     },
   });
 
-  pi.registerCommand("venice-stats-widget", {
-    description: "Manage the stats widget lock: /venice-stats-widget claim \u2014 take over when the previous session is gone",
-    handler: async (args, ctx) => {
-      const sub = (args ?? "").trim();
-      if (sub === "claim") {
-        if (tryClaimStaleWidgetLock()) {
-          stopPriceWidget(ctx);
-          startWidget(ctx);
-          notify(ctx, "Stats widget claimed \u2014 polling started in this session.", "success");
-        } else {
-          notify(ctx, "Another pi session is still running and holds the widget lock.\nClose it first, then run /venice-stats-widget claim again.", "error");
-        }
-        return;
-      }
-      notify(ctx,
-        "Usage: /venice-stats-widget claim \u2014 force-take the widget lock when the previous session is gone.",
-        "info"
-      );
-    },
-  });
 }

@@ -16,114 +16,78 @@ Or load directly:
 pi -e npm:pi-venice-stats
 ```
 
-## Default view
+Set your API keys before starting Pi:
 
-Two-column box-drawing grid — protocol data on the left, system/balance/wallet on the right rail:
+```bash
+export VENICE_ADMIN_API_KEY="your-venice-admin-key"  # Admin key required — Inference keys won't work
+export VENICE_WALLET="0x<your-address>"               # wallet stats (or set via /venice-stats-wallet)
+```
+
+## Presets
+
+Switch layouts with `/venice-stats-preset [off|usage|wallet|max]`. Default is `max`.
+
+**`max`** — full two-column box-drawing grid:
 
 ```
 ┌──────────────────────────────────────────────────────────────┬──────────────────────────────────────┐
-│ VVV $8.07 ▇█▃▂▃▄▁▁▃▂▃▃ ↓4.2% 24h      DIEM $1060.79 …    │ SYSTEM                               │
-│ MCap $371.8M · Ranked #117 · FDV $399M  MCap $40.1M …      │ EDT 17:25:14 · next epoch 2h 34m 45s │
+│ VVV $8.07 ▁▃▅▇▅▃ ↓4.2% 24h         DIEM $1060.79 ▂▄▆▄ ↑1.2%  │ SYSTEM                               │
+│ MCap $371.8M · Ranked #117 · FDV $399M   MCap $40.1M          │ EDT 17:25:14 · next epoch 2h 34m 45s │
 ├──────────────────────────────────────────────────────────────┼──────────────────────────────────────┤
 │ VVV STAKING                                                  │ BALANCE                              │
-│ Staked ███████░░░ 67.7% @ 18.2% APR   Locked …   Cooldown … │ $0.1426 · DIEM 0.8061/4.9615 used    │
+│ Staked 67.7% @ 18.2% APR   Locked 12.1%   Cooldown 1,234     │ $0.14 USD · DIEM 0.806/4.962 used    │
 ├──────────────────────────────────────────────────────────────┼──────────────────────────────────────┤
 │ DIEM ANALYTICS                                               │ WALLET                               │
-│ DIEM Supply 37.8k   Mint Rate 665 sVVV   Rem …   Staked ██░ │ 0x4486…80bc Patrician Octopus 🐙      │
+│ DIEM Supply 37.8k   Mint Rate 665 sVVV   Staked 42.1%        │ 0x4486...80bc  Patrician Octopus     │
 ├──────────────────────────────────────────────────────────────┤ Portfolio $26.7K   Rank #465/14.5k   │
 │ 24H MARKET                                                   │ ⎿ sVVV 3,303   Pending 0.12 VVV      │
-│ Vol $5.0M ↓19.6%   Traders 1,683 ↑42%   Swaps 10.2k         │ PROTOCOL EXPOSURE                    │
-│ Buy/Sell 48/52%   Net Flow +228k VVV (7d)   Top: VVV/WETH    │ ▁▂▂▂▁▁▂▂▂▂▂▄▃▄▃▃▅▆▆█  $31.9K ↑14% 30d │
+│ Vol $5.0M ↓19.6%   Traders 1,683 ↑42%   Swaps 10.2k          │ PROTOCOL EXPOSURE                    │
+│ Buy/Sell 48/52%   Net Flow +228k VVV (7d)   Top: VVV/WETH    │ ▁▂▃▄▅▆▇█ $31.9K ↑14% 30d             │
 └──────────────────────────────────────────────────────────────┴──────────────────────────────────────┘
 ```
 
-- VVV and DIEM prices flash **green** on uptick and **red** on downtick
-- Configurable sparkline periods: `1h`, `24h`, `7d`, `30d` for both prices and exposure
-- MCap with CoinGecko rank and FDV (fully diluted valuation)
-- **Portfolio** = `(sVVV + VVV + pending rewards + cooldown) × VVV price` — VVV-denominated holdings
-- **Protocol Exposure** = portfolio + DIEM staked value — total protocol position, computed live
-- Section headers in blue (`syntaxKeyword`), wallet address colored by venetian role
-- Width-adaptive: gracefully degrades on narrow terminals (< 80 cols stacks vertically)
+**`wallet`** — prices + compact wallet, 5-row grid:
+
+```
+┌──────────────────────────────────────────────────────────────┬──────────────────────────────────────┐
+│ VVV $8.07 ▁▃▅▇▅▃ ↓4.2% 24h         DIEM $1060.79 ▂▄▆▄ ↑1.2%  │ SYSTEM                               │
+│ MCap $371.8M · Ranked #117 · FDV $399M   MCap $40.1M          │ EDT 17:25:14 · next epoch 2h 34m 45s │
+├──────────────────────────────────────────────────────────────┼──────────────────────────────────────┤
+│ WALLET  0x4486...80bc  Patrician Octopus  Rank #465/14.5k    │ BALANCE                              │
+│ ⎿ Portfolio $26.7K  sVVV 3,303  Pending 0.12 VVV             │ $0.14 USD · DIEM 0.806/4.962 used    │
+└──────────────────────────────────────────────────────────────┴──────────────────────────────────────┘
+```
+
+**`usage`** — right-aligned clock + balance, no borders:
+
+```
+                                    EDT 17:25:14 · next epoch 2h 34m 45s
+                                              $0.14 USD · DIEM 0.806/4.962 used
+```
+
+**`off`** — widget hidden entirely.
 
 ## Clock overlay
 
-Shown in the SYSTEM and BALANCE sections of the right rail. When `VENICE_ADMIN_API_KEY` is set:
+Shown in the SYSTEM and BALANCE sections. When `VENICE_ADMIN_API_KEY` is set:
 
 - **SYSTEM** — `TZAbbrev HH:MM:SS · next epoch Xh YYm ZZs`
-- **BALANCE** — `$X.XX · DIEM X/Y used` (USD omitted when < $0.01; DIEM turns **red** below 10% remaining)
+- **BALANCE** — `$X.XX USD · DIEM X/Y used` (turns **red** when exhausted)
 
-DIEM precision scales dynamically based on your epoch allocation and remaining balance — so small allocations and low balances always show meaningful digits:
+DIEM precision scales dynamically:
 
-| Allocation | Remaining | Decimal places |
+| State | Decimal places | Example |
 |---|---|---|
-| ≥ 10 DIEM | ≥ 10 DIEM | 2 — `0.44 / 100.00 used` |
-| ≥ 10 DIEM | < 10 DIEM | 4 — `91.2345 / 100.0000 used` |
-| < 10 DIEM | any | 4 — `0.4375 / 4.9615 used` |
-| any | < 1 DIEM | 6 — `4.960500 / 4.961500 used` |
-| < 1 DIEM | any | 6 |
+| Exhausted (balance = 0) | 2, all red | `DIEM 4.96/4.96 used` |
+| allocation or remaining ≥ 1000 | 0 | `DIEM 1200/5000 used` |
+| allocation or remaining ≥ 100 | 1 | `DIEM 123.4/500.0 used` |
+| allocation or remaining ≥ 10 | 2 | `DIEM 8.12/10.00 used` |
+| allocation or remaining < 10 (≥ 1) | 3 | `DIEM 0.812/4.961 used` |
+| allocation or remaining < 1 | 4 | `DIEM 0.4375/0.9615 used` |
 
-USD shows 4 decimal places when below $1 (`$0.1426 USD`).
-
-```bash
-export VENICE_ADMIN_API_KEY="your-venice-admin-key"
-```
-
-**Time settings:**
-
-```text
-/venice-stats-time                           ← show timezone + format
-/venice-stats-time timezone America/New_York ← set IANA timezone
-/venice-stats-time timezone reset            ← restore auto-detection
-/venice-stats-time format 12h               ← 12-hour time (default is 24h)
-/venice-stats-time format 24h
-/venice-stats-time format reset
-```
-
-**Polling rates:**
-
-```text
-/venice-stats-polling                  ← show budget + billing interval
-/venice-stats-polling budget 10        ← venicestats.com request budget (1–59 req/min, default 30)
-/venice-stats-polling budget reset
-/venice-stats-polling billing 60       ← venice.ai billing poll interval (5–600s, default 60)
-/venice-stats-polling billing reset
-```
-
-**Sparkline periods:**
-
-```text
-/venice-stats-period                   ← show chart + exposure periods
-/venice-stats-period chart 1h          ← 1-hour sparklines
-/venice-stats-period chart 24h         ← 24-hour (default)
-/venice-stats-period chart 7d          ← 7-day
-/venice-stats-period chart 30d         ← 30-day
-/venice-stats-period chart reset
-/venice-stats-period exposure 1h       ← 1-hour
-/venice-stats-period exposure 24h      ← 24-hour
-/venice-stats-period exposure 7d       ← 7-day
-/venice-stats-period exposure 30d      ← 30-day (default)
-/venice-stats-period exposure reset
-```
-
-## Tracking your wallet
-
-```bash
-export VENICE_WALLET=0x<your-address>
-```
-
-Or set from inside the TUI (persisted across sessions):
-
-```text
-/venice-stats-wallet 0x<your-address>
-/venice-stats-wallet          ← show current
-/venice-stats-wallet clear    ← remove
-```
+USD always shows 2 decimal places. When USD or DIEM balance rounds to zero, that value turns red.
 
 ## Dashboard panels
-
-The layout is organized into left-column sections and a right rail. All panels are always active.
-
-**Panels:**
 
 | id | Label | What it shows | Data source |
 |----|-------|---------------|-------------|
@@ -133,9 +97,13 @@ The layout is organized into left-column sections and a right rail. All panels a
 | `markets` | 24H Market | Volume, traders, swaps (with arrow change indicators), buy/sell, net flow, top pool | `/api/markets` |
 | `wallet` | Wallet | Address, venetian name, portfolio (sVVV+VVV+rewards+cooldown), rank, protocol exposure sparkline | `/api/venetians`, `/api/wallet-history` |
 
-**Dynamic rate allocation** — targets a configurable budget (default **30 req/min**, range **1–59**), shared automatically across active data sources. Configure via `/venice-stats-polling budget`.
+**Health-driven polling** — polls `/api/health` every ~90 s and fetches a data source only when its pipeline has actually updated. Rate is naturally throttled by upstream update frequency.
 
-> **Multi-session warning** — only the first `pi` session to start renders the widget. Others display an info notice and make no requests. If the owning session exited without releasing the lock, run `/venice-stats-widget claim` to take over.
+> **Multi-session warning** — only the first `pi` session to start renders the widget. Others display an info notice and make no requests. If the widget isn't showing because a previous session didn't release the lock, restart Pi.
+
+## Slash commands
+
+See **[VENICE_STATS_COMMANDS.md](VENICE_STATS_COMMANDS.md)** for the full command reference (preset, wallet, time, sparkline periods).
 
 ## MCP integration
 
@@ -147,7 +115,7 @@ Pair this with the [`@venicestats/mcp-server`](https://www.npmjs.com/package/@ve
 pi install npm:pi-mcp-adapter
 ```
 
-**2. Add the venicestats server to `~/.pi/agent/mcp.json`:**
+**2. Add the venicestats server to your Pi config (`~/.pi/agent/mcp.json` or `$XDG_CONFIG_HOME/.pi/agent/mcp.json`):**
 
 ```json
 {
@@ -169,8 +137,6 @@ Who are the top 10 stakers?
 Show me insider trading activity this week.
 How has the staking ratio trended over 90 days?
 ```
-
-The `mcp` proxy tool handles discovery and routing — no extra setup needed.
 
 ## API endpoint reference
 
