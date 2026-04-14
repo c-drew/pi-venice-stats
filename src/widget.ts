@@ -3,15 +3,16 @@
  *
  * Polling is driven by /api/health — a lightweight sentinel that tells us when
  * each data pipeline has actually refreshed. Pipeline update frequencies
- * (observed over 30+ minutes of polling):
- *   prices       ~3 min   | diem        ~5 min  | staking     ~5 min
- *   holders      ~10 min  | burns       ~10 min | diemEvents  ~10 min
- *   rewards      ~10 min | stakingEvents ~10 min
+ * (observed from /api/health over 15+ min at 30s polling intervals):
+ *   prices       ~150s    | diem        ~260s   | staking     ~270s
+ *   holders      ~570s    | burns       ~570s   | diemEvents  ~570s
+ *   rewards      ~570s    | stakingEvents ~570s | treasury    ~20min+
+ *   vesting      ~4.7h+
  *
  * Strategy:
  *   1. Poll /api/health every ~90s — sentinel, ~1 req/min
- *   2. Each pipeline has a stale-threshold; when ageSec drops below it,
- *      the corresponding data fetch fires
+ *   2. When a pipeline's ageSec drops (vs. previous poll), it just refreshed —
+ *      trigger the corresponding data fetch
  *   3. Billing balance (venice.ai /billing/balance): 1 req/min max,
  *      also triggered after each agent loop completes
  */
@@ -62,26 +63,10 @@ const STATS_LOG        = join(PI_CONFIG_DIR, "venice-stats.log");
 const FLASH_MS         = 400;
 const TICK_MS           = 500;
 
-// How often to poll /api/health — 90s gives us a ~2 catch windows to notice
-// any pipeline refresh (prices update every 3 min, diem/staking every 5 min).
+// How often to poll /api/health — 90s gives roughly 1-2 catch windows per
+// pipeline cycle (prices ~150s, diem/staking ~270s, everything else ~570s+).
 const HEALTH_POLL_MS   = 90_000;
 const HEALTH_ENDPOINT  = "https://venicestats.com/api/health";
-
-// Per-pipeline thresholds: the ageSec below which we consider the pipeline
-// freshly updated and should re-fetch its data. Set just under the observed
-// update interval so we catch the update right after it fires.
-const STALE_THRESHOLD: Record<string, number> = {
-  prices:  180,  // ~3 min interval → 3 min stale
-  diem:    300,  // ~5 min interval → 5 min stale
-  staking: 300,  // ~5 min interval → 5 min stale
-  holders: 600,  // ~10 min interval → 10 min stale
-  burns:   600,  // ~10 min interval → 10 min stale
-  diemEvents:     600,
-  rewards:        600,
-  stakingEvents:  600,
-  treasury: 1800, // ~30 min interval → 30 min stale
-  vesting: 21600, // ~6 h interval → 6 h stale (essentially never in a session)
-};
 
 // ---------------------------------------------------------------------------
 // Multi-session lock
