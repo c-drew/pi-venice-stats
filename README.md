@@ -19,7 +19,7 @@ pi -e npm:pi-venice-stats
 Set your API keys before starting Pi:
 
 ```bash
-export VENICE_ADMIN_API_KEY="your-venice-admin-key"  # enables billing balance in the clock
+export VENICE_ADMIN_API_KEY="your-venice-admin-key"  # Admin key required — Inference keys won't work
 export VENICE_WALLET="0x<your-address>"               # wallet stats (or set via /venice-stats-wallet)
 ```
 
@@ -31,18 +31,18 @@ Switch layouts with `/venice-stats-preset [off|usage|wallet|max]`. Default is `m
 
 ```
 ┌──────────────────────────────────────────────────────────────┬──────────────────────────────────────┐
-│ VVV $8.07 ▇█▃▂▃▄▁▁▃▂▃▃ ↓4.2% 24h      DIEM $1060.79 …    │ SYSTEM                               │
-│ MCap $371.8M · Ranked #117 · FDV $399M  MCap $40.1M …      │ EDT 17:25:14 · next epoch 2h 34m 45s │
+│ VVV $8.07 ▁▃▅▇▅▃ ↓4.2% 24h         DIEM $1060.79 ▂▄▆▄ ↑1.2%  │ SYSTEM                               │
+│ MCap $371.8M · Ranked #117 · FDV $399M   MCap $40.1M          │ EDT 17:25:14 · next epoch 2h 34m 45s │
 ├──────────────────────────────────────────────────────────────┼──────────────────────────────────────┤
 │ VVV STAKING                                                  │ BALANCE                              │
-│ Staked ███████░░░ 67.7% @ 18.2% APR   Locked …   Cooldown … │ $0.14 · DIEM 0.806/4.962 used        │
+│ Staked 67.7% @ 18.2% APR   Locked 12.1%   Cooldown 1,234     │ $0.14 USD · DIEM 0.806/4.962 used    │
 ├──────────────────────────────────────────────────────────────┼──────────────────────────────────────┤
 │ DIEM ANALYTICS                                               │ WALLET                               │
-│ DIEM Supply 37.8k   Mint Rate 665 sVVV   Rem …   Staked ██░ │ 0x4486…80bc Patrician Octopus 🐙      │
+│ DIEM Supply 37.8k   Mint Rate 665 sVVV   Staked 42.1%        │ 0x4486...80bc  Patrician Octopus     │
 ├──────────────────────────────────────────────────────────────┤ Portfolio $26.7K   Rank #465/14.5k   │
 │ 24H MARKET                                                   │ ⎿ sVVV 3,303   Pending 0.12 VVV      │
-│ Vol $5.0M ↓19.6%   Traders 1,683 ↑42%   Swaps 10.2k         │ PROTOCOL EXPOSURE                    │
-│ Buy/Sell 48/52%   Net Flow +228k VVV (7d)   Top: VVV/WETH    │ ▁▂▂▂▁▁▂▂▂▂▂▄▃▄▃▃▅▆▆█  $31.9K ↑14% 30d │
+│ Vol $5.0M ↓19.6%   Traders 1,683 ↑42%   Swaps 10.2k          │ PROTOCOL EXPOSURE                    │
+│ Buy/Sell 48/52%   Net Flow +228k VVV (7d)   Top: VVV/WETH    │ ▁▂▃▄▅▆▇█ $31.9K ↑14% 30d             │
 └──────────────────────────────────────────────────────────────┴──────────────────────────────────────┘
 ```
 
@@ -50,11 +50,11 @@ Switch layouts with `/venice-stats-preset [off|usage|wallet|max]`. Default is `m
 
 ```
 ┌──────────────────────────────────────────────────────────────┬──────────────────────────────────────┐
-│ VVV $8.07 ▇█▃▂ ↓4.2% 24h      DIEM $1060.79 ▄▆▃ ↑1.2% 24h  │ SYSTEM                               │
-│ MCap $371.8M · Ranked #117 · FDV …   MCap $40.1M · Ranked … │ EDT 17:25:14 · next epoch 2h 34m 45s │
+│ VVV $8.07 ▁▃▅▇▅▃ ↓4.2% 24h         DIEM $1060.79 ▂▄▆▄ ↑1.2%  │ SYSTEM                               │
+│ MCap $371.8M · Ranked #117 · FDV $399M   MCap $40.1M          │ EDT 17:25:14 · next epoch 2h 34m 45s │
 ├──────────────────────────────────────────────────────────────┼──────────────────────────────────────┤
-│ WALLET  0x4486…80bc  Patrician Octopus 🐙  Rank #465/14.5k   │ BALANCE                              │
-│ ⎿ Portfolio $26.7K  sVVV 3,303  Pending 0.12 VVV             │ $0.14 · DIEM 0.806/4.962 used        │
+│ WALLET  0x4486...80bc  Patrician Octopus  Rank #465/14.5k    │ BALANCE                              │
+│ ⎿ Portfolio $26.7K  sVVV 3,303  Pending 0.12 VVV             │ $0.14 USD · DIEM 0.806/4.962 used    │
 └──────────────────────────────────────────────────────────────┴──────────────────────────────────────┘
 ```
 
