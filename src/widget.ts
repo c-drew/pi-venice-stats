@@ -37,6 +37,7 @@ import {
   arrow,
   sparkline,
   renderClock,
+  DIEM_TARGET_SUPPLY,
   type AllData,
   type MetricsData,
   type WalletData,
@@ -733,10 +734,13 @@ export function startPriceWidget(
           let diemData = "";
           if (panels.includes("diem") && metrics) {
             const gw = gaugeWidth(leftW, 0.05);
+            const delta = DIEM_TARGET_SUPPLY - metrics.diemSupply;
+            const deltaSign = delta >= 0 ? "+" : "\u2212";
+            const deltaColor = delta >= 0 ? "success" : "error";
             diemData =
               dim("DIEM Supply ") + theme.fg("text", fmtK(metrics.diemSupply)) + spc +
               dim("Mint Rate ") + theme.fg("text", `${metrics.mintRate.toFixed(0)} sVVV`) + spc +
-              dim("Remaining Mintable ") + theme.fg("text", fmtK(metrics.remainingMintable)) + spc +
+              dim("Target \u0394 ") + theme.fg(deltaColor, `${deltaSign}${fmtK(Math.abs(delta))}`) + spc +
               dim("Staked ") + gauge(metrics.diemStakeRatio, gw, theme) +
               theme.fg("text", ` ${(metrics.diemStakeRatio * 100).toFixed(1)}%`);
           }
