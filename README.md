@@ -38,7 +38,7 @@ Switch layouts with `/venice-stats-preset [off|usage|wallet|max]`. Default is `m
 │ Staked 67.7% @ 18.2% APR   Locked 12.1%   Cooldown 1,234     │ $0.14 USD · DIEM 0.806/4.962 used    │
 ├──────────────────────────────────────────────────────────────┼──────────────────────────────────────┤
 │ DIEM ANALYTICS                                               │ WALLET                               │
-│ DIEM Supply 37.8k   Mint Rate 665 sVVV   Staked 42.1%        │ 0x4486...80bc  Patrician Octopus     │
+│ DIEM Supply 38.1k   Mint Rate 709 sVVV   Target Δ −70   Staked 64.2% │ 0x4486...80bc  Patrician Octopus │
 ├──────────────────────────────────────────────────────────────┤ Portfolio $26.7K   Rank #465/14.5k   │
 │ 24H MARKET                                                   │ ⎿ sVVV 3,303   Pending 0.12 VVV      │
 │ Vol $5.0M ↓19.6%   Traders 1,683 ↑42%   Swaps 10.2k          │ PROTOCOL EXPOSURE                    │
@@ -93,7 +93,7 @@ USD always shows 2 decimal places. When USD or DIEM balance rounds to zero, that
 |----|-------|---------------|-------------|
 | `prices` | Prices | VVV + DIEM prices with sparklines, change %, MCap, CoinGecko rank, FDV | `/api/metrics`, `/api/charts`, `/api/social` |
 | `staking` | VVV Staking | Staking ratio, APR, locked %, cooldown sparkline + count | `/api/metrics`, `/api/charts` |
-| `diem` | DIEM Analytics | Supply, mint rate, remaining mintable, staked gauge | `/api/metrics` |
+| `diem` | DIEM Analytics | Supply, mint rate, target delta (signed distance from 38k target), staked gauge | `/api/metrics` |
 | `markets` | 24H Market | Volume, traders, swaps (with arrow change indicators), buy/sell, net flow, top pool | `/api/markets` |
 | `wallet` | Wallet | Address, venetian name, portfolio (sVVV+VVV+rewards+cooldown), rank, protocol exposure sparkline | `/api/venetians`, `/api/wallet-history` |
 
