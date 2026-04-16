@@ -17,7 +17,7 @@
  *      also triggered after each agent loop completes
  */
 
-import { appendFileSync, closeSync, constants as fsConstants, lstatSync, openSync, readFileSync, unlinkSync, writeSync } from "node:fs";
+import { appendFileSync, chmodSync, closeSync, constants as fsConstants, lstatSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionContext } from "@mariozechner/pi-coding-agent";
@@ -173,9 +173,34 @@ export function releaseWidgetLock(): void {
 // Logging
 // ---------------------------------------------------------------------------
 
+/** Cap the log so a long-running session can't fill the disk. When STATS_LOG
+ *  passes this size we rotate to STATS_LOG.1 (overwriting any prior rotation)
+ *  before continuing to append. */
+const LOG_MAX_BYTES = 1_048_576; // 1 MiB
+let logRotateChecked = 0;
+let logPermsTightened = false;
+
 function plog(msg: string) {
   const ts = new Date().toISOString();
-  try { appendFileSync(STATS_LOG, `[${ts}] ${msg}\n`); } catch { /* ignore */ }
+  try {
+    // Check size at most once every ~5s to avoid statSync per write.
+    const now = Date.now();
+    if (now - logRotateChecked > 5_000) {
+      logRotateChecked = now;
+      try {
+        const st = statSync(STATS_LOG);
+        if (st.size > LOG_MAX_BYTES) {
+          try { renameSync(STATS_LOG, STATS_LOG + ".1"); } catch { /* ignore */ }
+        }
+      } catch { /* ENOENT — file doesn't exist yet */ }
+    }
+    appendFileSync(STATS_LOG, `[${ts}] ${msg}\n`, { mode: 0o600 });
+    // Tighten perms once per session in case the file pre-existed with looser bits.
+    if (!logPermsTightened) {
+      logPermsTightened = true;
+      try { chmodSync(STATS_LOG, 0o600); } catch { /* ignore */ }
+    }
+  } catch { /* ignore */ }
 }
 
 // ---------------------------------------------------------------------------
