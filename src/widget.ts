@@ -386,10 +386,17 @@ export function startPriceWidget(
         if (!disposed) tui.requestRender();
       }
 
+      // In-flight guards prevent overlapping fetches when health-sentinel
+      // refreshes pile up faster than the wallet endpoints can respond.
+      let walletInFlight = false;
+      let walletHistoryInFlight = false;
+
       async function fetchWallet() {
         if (!getPanels().includes("wallet")) { wallet = null; return; }
         const addr = getWallet();
         if (!addr) { wallet = null; return; }
+        if (walletInFlight) return;
+        walletInFlight = true;
         if (addr !== lastWalletAddr) { wallet = null; lastWalletAddr = addr; }
         try {
           const res = await fetch(`https://venicestats.com/api/venetians?address=${addr}`, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
@@ -407,6 +414,7 @@ export function startPriceWidget(
           logPanels();
           fetchWalletHistory();
         } catch (err) { sourceErrors.set("wallet", (sourceErrors.get("wallet") ?? 0) + 1); plog(`wallet error: ${err}`); }
+        finally { walletInFlight = false; }
         if (!disposed) tui.requestRender();
       }
 
@@ -540,10 +548,13 @@ export function startPriceWidget(
 
       async function fetchWalletHistory() {
         if (!getPanels().includes("wallet") || !getWallet()) { walletExposure = null; return; }
+        if (walletHistoryInFlight) return;
+        walletHistoryInFlight = true;
         try {
           walletExposure = await getExposureSparkline(getExposurePeriod());
           if (walletExposure) plog(`wallet-history ok — $${walletExposure.currentExposure.toFixed(0)} chg=${walletExposure.changePct.toFixed(1)}%`);
         } catch (err) { plog(`wallet-history error: ${err}`); }
+        finally { walletHistoryInFlight = false; }
         if (!disposed) tui.requestRender();
       }
 
