@@ -17,7 +17,7 @@
  *      also triggered after each agent loop completes
  */
 
-import { appendFileSync, existsSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
+import { appendFileSync, closeSync, constants as fsConstants, lstatSync, openSync, readFileSync, unlinkSync, writeSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionContext } from "@mariozechner/pi-coding-agent";
@@ -87,19 +87,68 @@ function isPiProcess(pid: number): boolean {
   }
 }
 
-export function tryAcquireWidgetLock(): boolean {
+// Reject the lock path if it's a symlink, directory, or any non-regular file.
+// Prevents a local attacker from clobbering an arbitrary file by pre-planting
+// a symlink at WIDGET_LOCK, and prevents a stuck "another session" message
+// when the path is unexpectedly a directory.
+function lockPathIsSafe(): boolean {
   try {
-    if (existsSync(WIDGET_LOCK)) {
-      const raw = readFileSync(WIDGET_LOCK, "utf8").trim();
-      const pid = Number(raw);
-      if (!isNaN(pid) && isPiProcess(pid) && pid !== process.pid) {
-        return false;
-      }
-    }
-    writeFileSync(WIDGET_LOCK, String(process.pid), "utf8");
+    const st = lstatSync(WIDGET_LOCK);
+    return st.isFile();
+  } catch (err: any) {
+    // ENOENT is fine — we'll create the file fresh.
+    return err?.code === "ENOENT";
+  }
+}
+
+export function tryAcquireWidgetLock(): boolean {
+  if (!lockPathIsSafe()) {
+    plog(`lock path unsafe (not a regular file) — refusing to acquire`);
+    return false;
+  }
+  // O_EXCL fails atomically if the file already exists; O_NOFOLLOW refuses to
+  // open through a symlink. Mode 0o600 keeps the PID file owner-only.
+  try {
+    const fd = openSync(
+      WIDGET_LOCK,
+      fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_NOFOLLOW,
+      0o600,
+    );
+    try { writeSync(fd, String(process.pid)); } finally { closeSync(fd); }
     _lockOwned = true;
     return true;
+  } catch (err: any) {
+    if (err?.code !== "EEXIST") {
+      plog(`lock acquire failed: ${err?.code ?? err}`);
+      return false;
+    }
+  }
+
+  // File exists — check whether the recorded PID is still a live pi process.
+  let pid: number;
+  try {
+    const raw = readFileSync(WIDGET_LOCK, "utf8").trim();
+    pid = Number(raw);
+    if (!Number.isInteger(pid) || pid <= 0) return false;
   } catch { return false; }
+
+  if (isPiProcess(pid) && pid !== process.pid) return false;
+
+  // Stale lock — owner is dead. Replace it atomically: unlink, then create with O_EXCL.
+  try { unlinkSync(WIDGET_LOCK); } catch { /* race with another claimer is fine */ }
+  try {
+    const fd = openSync(
+      WIDGET_LOCK,
+      fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_NOFOLLOW,
+      0o600,
+    );
+    try { writeSync(fd, String(process.pid)); } finally { closeSync(fd); }
+    _lockOwned = true;
+    return true;
+  } catch (err: any) {
+    plog(`stale lock takeover failed: ${err?.code ?? err}`);
+    return false;
+  }
 }
 
 export function tryClaimStaleWidgetLock(): boolean {
