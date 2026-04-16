@@ -270,6 +270,11 @@ export function startPriceWidget(
         }
       }
 
+      // Notify the user once per session if the venice.ai admin key is rejected,
+      // so a misconfigured VENICE_ADMIN_API_KEY surfaces instead of silently
+      // suppressing the billing overlay forever.
+      let billingAuthNotified = false;
+
       async function fetchBilling() {
         const adminKey = process.env["VENICE_ADMIN_API_KEY"];
         if (!adminKey) { billing = null; return; }
@@ -278,7 +283,14 @@ export function startPriceWidget(
             headers: { Authorization: `Bearer ${adminKey}` },
             signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
           });
-          if (!res.ok) { plog(`billing error: ${res.status}`); return; }
+          if (!res.ok) {
+            plog(`billing error: ${res.status}`);
+            if ((res.status === 401 || res.status === 403) && !billingAuthNotified) {
+              billingAuthNotified = true;
+              try { ctx.ui.notify(`VENICE_ADMIN_API_KEY rejected (${res.status}) — billing overlay disabled.`, "error"); } catch { /* ignore */ }
+            }
+            return;
+          }
           const d = await res.json() as any;
           billing = {
             canConsume: Boolean(d.canConsume),
