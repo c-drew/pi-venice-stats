@@ -250,6 +250,12 @@ export const BILLING_INTERVAL_MIN = 5;
 /** Maximum billing poll interval in seconds. */
 export const BILLING_INTERVAL_MAX = 600;
 
+/** Venice-controlled DIEM target supply. Update if Venice adjusts the target. */
+export const DIEM_TARGET_SUPPLY = 38_000;
+
+/** Strict EVM address shape — used to reject anything that could break URL/query semantics. */
+export const EVM_ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
+
 export interface PanelDef {
   id: string;
   label: string;
@@ -525,12 +531,15 @@ export const PANEL_REGISTRY: Record<string, PanelDef> = {
     render({ metrics }, theme, sep, width) {
       if (!metrics) return null;
       const gw = gaugeWidth(width, 0.05);
+      const delta = DIEM_TARGET_SUPPLY - metrics.diemSupply;
+      const sign = delta >= 0 ? "+" : "\u2212";
+      const color = delta >= 0 ? "success" : "error";
       return (
         theme.fg("dim",  "DIEM Supply ")    + theme.fg("text", fmtK(metrics.diemSupply)) +
         sep +
         theme.fg("dim",  "Mint Rate ")     + theme.fg("text", `${metrics.mintRate.toFixed(2)} sVVV`) +
         sep +
-        theme.fg("dim",  "Remaining Mintable ") + theme.fg("text", fmtK(metrics.remainingMintable)) +
+        theme.fg("dim",  "Target \u0394 ") + theme.fg(color, `${sign}${fmtK(Math.abs(delta))}`) +
         sep +
         theme.fg("dim",  "Staked ") + gauge(metrics.diemStakeRatio, gw, theme) + theme.fg("text", ` ${(metrics.diemStakeRatio * 100).toFixed(1)}%`)
       );
@@ -556,7 +565,7 @@ export const PANEL_REGISTRY: Record<string, PanelDef> = {
         theme.fg("text", ` ${metrics.lockRatio.toFixed(1)}%`);
 
       const wave   = charts?.cooldownWave ?? [];
-      const waveChg = wave.length >= 2
+      const waveChg = wave.length >= 2 && wave[0] > 0
         ? ((wave[wave.length - 1] - wave[0]) / wave[0]) * 100
         : 0;
       const waveDir = waveChg <= -2 ? "success" : waveChg >= 2 ? "error" : "text";

@@ -17,7 +17,7 @@
  *      also triggered after each agent loop completes
  */
 
-import { appendFileSync, existsSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
+import { appendFileSync, chmodSync, closeSync, constants as fsConstants, lstatSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionContext } from "@mariozechner/pi-coding-agent";
@@ -37,6 +37,7 @@ import {
   arrow,
   sparkline,
   renderClock,
+  DIEM_TARGET_SUPPLY,
   type AllData,
   type MetricsData,
   type WalletData,
@@ -67,6 +68,10 @@ const TICK_MS           = 500;
 // pipeline cycle (prices ~150s, diem/staking ~270s, everything else ~570s+).
 const HEALTH_POLL_MS   = 90_000;
 const HEALTH_ENDPOINT  = "https://venicestats.com/api/health";
+/** Per-request HTTP timeout. Network calls that hang longer than this are aborted
+ *  so a single dead socket can't pin a fetch in flight forever and starve later
+ *  polls (the in-flight guards block re-entry until the outstanding call resolves). */
+const FETCH_TIMEOUT_MS = 15_000;
 
 // ---------------------------------------------------------------------------
 // Multi-session lock
@@ -86,19 +91,68 @@ function isPiProcess(pid: number): boolean {
   }
 }
 
-export function tryAcquireWidgetLock(): boolean {
+// Reject the lock path if it's a symlink, directory, or any non-regular file.
+// Prevents a local attacker from clobbering an arbitrary file by pre-planting
+// a symlink at WIDGET_LOCK, and prevents a stuck "another session" message
+// when the path is unexpectedly a directory.
+function lockPathIsSafe(): boolean {
   try {
-    if (existsSync(WIDGET_LOCK)) {
-      const raw = readFileSync(WIDGET_LOCK, "utf8").trim();
-      const pid = Number(raw);
-      if (!isNaN(pid) && isPiProcess(pid) && pid !== process.pid) {
-        return false;
-      }
-    }
-    writeFileSync(WIDGET_LOCK, String(process.pid), "utf8");
+    const st = lstatSync(WIDGET_LOCK);
+    return st.isFile();
+  } catch (err: any) {
+    // ENOENT is fine — we'll create the file fresh.
+    return err?.code === "ENOENT";
+  }
+}
+
+export function tryAcquireWidgetLock(): boolean {
+  if (!lockPathIsSafe()) {
+    plog(`lock path unsafe (not a regular file) — refusing to acquire`);
+    return false;
+  }
+  // O_EXCL fails atomically if the file already exists; O_NOFOLLOW refuses to
+  // open through a symlink. Mode 0o600 keeps the PID file owner-only.
+  try {
+    const fd = openSync(
+      WIDGET_LOCK,
+      fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_NOFOLLOW,
+      0o600,
+    );
+    try { writeSync(fd, String(process.pid)); } finally { closeSync(fd); }
     _lockOwned = true;
     return true;
+  } catch (err: any) {
+    if (err?.code !== "EEXIST") {
+      plog(`lock acquire failed: ${err?.code ?? err}`);
+      return false;
+    }
+  }
+
+  // File exists — check whether the recorded PID is still a live pi process.
+  let pid: number;
+  try {
+    const raw = readFileSync(WIDGET_LOCK, "utf8").trim();
+    pid = Number(raw);
+    if (!Number.isInteger(pid) || pid <= 0) return false;
   } catch { return false; }
+
+  if (isPiProcess(pid) && pid !== process.pid) return false;
+
+  // Stale lock — owner is dead. Replace it atomically: unlink, then create with O_EXCL.
+  try { unlinkSync(WIDGET_LOCK); } catch { /* race with another claimer is fine */ }
+  try {
+    const fd = openSync(
+      WIDGET_LOCK,
+      fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_NOFOLLOW,
+      0o600,
+    );
+    try { writeSync(fd, String(process.pid)); } finally { closeSync(fd); }
+    _lockOwned = true;
+    return true;
+  } catch (err: any) {
+    plog(`stale lock takeover failed: ${err?.code ?? err}`);
+    return false;
+  }
 }
 
 export function tryClaimStaleWidgetLock(): boolean {
@@ -119,9 +173,34 @@ export function releaseWidgetLock(): void {
 // Logging
 // ---------------------------------------------------------------------------
 
+/** Cap the log so a long-running session can't fill the disk. When STATS_LOG
+ *  passes this size we rotate to STATS_LOG.1 (overwriting any prior rotation)
+ *  before continuing to append. */
+const LOG_MAX_BYTES = 1_048_576; // 1 MiB
+let logRotateChecked = 0;
+let logPermsTightened = false;
+
 function plog(msg: string) {
   const ts = new Date().toISOString();
-  try { appendFileSync(STATS_LOG, `[${ts}] ${msg}\n`); } catch { /* ignore */ }
+  try {
+    // Check size at most once every ~5s to avoid statSync per write.
+    const now = Date.now();
+    if (now - logRotateChecked > 5_000) {
+      logRotateChecked = now;
+      try {
+        const st = statSync(STATS_LOG);
+        if (st.size > LOG_MAX_BYTES) {
+          try { renameSync(STATS_LOG, STATS_LOG + ".1"); } catch { /* ignore */ }
+        }
+      } catch { /* ENOENT — file doesn't exist yet */ }
+    }
+    appendFileSync(STATS_LOG, `[${ts}] ${msg}\n`, { mode: 0o600 });
+    // Tighten perms once per session in case the file pre-existed with looser bits.
+    if (!logPermsTightened) {
+      logPermsTightened = true;
+      try { chmodSync(STATS_LOG, 0o600); } catch { /* ignore */ }
+    }
+  } catch { /* ignore */ }
 }
 
 // ---------------------------------------------------------------------------
@@ -216,14 +295,39 @@ export function startPriceWidget(
         }
       }
 
+      // Notify the user once per session if the venice.ai admin key is rejected,
+      // so a misconfigured VENICE_ADMIN_API_KEY surfaces instead of silently
+      // suppressing the billing overlay forever.
+      let billingAuthNotified = false;
+      let billingKeyShapeNotified = false;
+
       async function fetchBilling() {
         const adminKey = process.env["VENICE_ADMIN_API_KEY"];
         if (!adminKey) { billing = null; return; }
+        // Reject keys containing CR/LF or other control chars — pasting one with a
+        // stray newline would otherwise inject extra HTTP headers via the
+        // Authorization value. Notify once so the user knows to re-set it.
+        if (/[\r\n\x00-\x1f\x7f]/.test(adminKey)) {
+          billing = null;
+          if (!billingKeyShapeNotified) {
+            billingKeyShapeNotified = true;
+            try { ctx.ui.notify("VENICE_ADMIN_API_KEY contains control characters — billing overlay disabled.", "error"); } catch { /* ignore */ }
+          }
+          return;
+        }
         try {
           const res = await fetch(`${VENICE_API_BASE}/billing/balance`, {
             headers: { Authorization: `Bearer ${adminKey}` },
+            signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
           });
-          if (!res.ok) { plog(`billing error: ${res.status}`); return; }
+          if (!res.ok) {
+            plog(`billing error: ${res.status}`);
+            if ((res.status === 401 || res.status === 403) && !billingAuthNotified) {
+              billingAuthNotified = true;
+              try { ctx.ui.notify(`VENICE_ADMIN_API_KEY rejected (${res.status}) — billing overlay disabled.`, "error"); } catch { /* ignore */ }
+            }
+            return;
+          }
           const d = await res.json() as any;
           billing = {
             canConsume: Boolean(d.canConsume),
@@ -242,7 +346,7 @@ export function startPriceWidget(
 
       async function fetchMetrics() {
         try {
-          const res = await fetch("https://venicestats.com/api/metrics");
+          const res = await fetch("https://venicestats.com/api/metrics", { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
           if (!res.ok) { sourceErrors.set("metrics", (sourceErrors.get("metrics") ?? 0) + 1); plog(`metrics error: ${res.status}`); return; }
           const d = await res.json() as any;
           if (typeof d.vvvPrice !== "number") { sourceErrors.set("metrics", (sourceErrors.get("metrics") ?? 0) + 1); return; }
@@ -282,13 +386,20 @@ export function startPriceWidget(
         if (!disposed) tui.requestRender();
       }
 
+      // In-flight guards prevent overlapping fetches when health-sentinel
+      // refreshes pile up faster than the wallet endpoints can respond.
+      let walletInFlight = false;
+      let walletHistoryInFlight = false;
+
       async function fetchWallet() {
         if (!getPanels().includes("wallet")) { wallet = null; return; }
         const addr = getWallet();
         if (!addr) { wallet = null; return; }
+        if (walletInFlight) return;
+        walletInFlight = true;
         if (addr !== lastWalletAddr) { wallet = null; lastWalletAddr = addr; }
         try {
-          const res = await fetch(`https://venicestats.com/api/venetians?address=${addr}`);
+          const res = await fetch(`https://venicestats.com/api/venetians?address=${addr}`, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
           if (!res.ok) { sourceErrors.set("wallet", (sourceErrors.get("wallet") ?? 0) + 1); plog(`wallet error: ${res.status}`); return; }
           sourceErrors.set("wallet", 0);
           const d = await res.json() as any;
@@ -303,13 +414,14 @@ export function startPriceWidget(
           logPanels();
           fetchWalletHistory();
         } catch (err) { sourceErrors.set("wallet", (sourceErrors.get("wallet") ?? 0) + 1); plog(`wallet error: ${err}`); }
+        finally { walletInFlight = false; }
         if (!disposed) tui.requestRender();
       }
 
       async function fetchSocial() {
         if (!getPanels().includes("social")) { social = null; return; }
         try {
-          const res = await fetch("https://venicestats.com/api/social");
+          const res = await fetch("https://venicestats.com/api/social", { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
           if (!res.ok) { sourceErrors.set("social", (sourceErrors.get("social") ?? 0) + 1); plog(`social error: ${res.status}`); return; }
           sourceErrors.set("social", 0);
           const d = await res.json() as any;
@@ -327,7 +439,7 @@ export function startPriceWidget(
       async function fetchMarkets() {
         if (!getPanels().includes("markets")) { markets = null; return; }
         try {
-          const res = await fetch("https://venicestats.com/api/markets?token=VVV&period=24h");
+          const res = await fetch("https://venicestats.com/api/markets?token=VVV&period=24h", { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
           if (!res.ok) { sourceErrors.set("markets", (sourceErrors.get("markets") ?? 0) + 1); plog(`markets error: ${res.status}`); return; }
           sourceErrors.set("markets", 0);
           const d = await res.json() as any;
@@ -385,7 +497,7 @@ export function startPriceWidget(
         if (!getPanels().some(id => ["staking", "diem"].includes(id))) return;
         const cp = getCooldownPeriod();
         try {
-          const waveRes = await fetch(`https://venicestats.com/api/charts?period=${cp}&metric=cooldownWave`);
+          const waveRes = await fetch(`https://venicestats.com/api/charts?period=${cp}&metric=cooldownWave`, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
           if (!waveRes.ok) {
             plog(`cooldown error: ${waveRes.status}`);
             return;
@@ -417,7 +529,7 @@ export function startPriceWidget(
         const addr = getWallet();
         if (!addr) return null;
         const url = `https://venicestats.com/api/wallet-history?address=${addr}&granularity=${granularity}`;
-        const res = await fetch(url);
+        const res = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
         if (!res.ok) return null;
         const d = await res.json() as any;
         const rawPts: any[] = Array.isArray(d.points) ? d.points : [];
@@ -436,10 +548,13 @@ export function startPriceWidget(
 
       async function fetchWalletHistory() {
         if (!getPanels().includes("wallet") || !getWallet()) { walletExposure = null; return; }
+        if (walletHistoryInFlight) return;
+        walletHistoryInFlight = true;
         try {
           walletExposure = await getExposureSparkline(getExposurePeriod());
           if (walletExposure) plog(`wallet-history ok — $${walletExposure.currentExposure.toFixed(0)} chg=${walletExposure.changePct.toFixed(1)}%`);
         } catch (err) { plog(`wallet-history error: ${err}`); }
+        finally { walletHistoryInFlight = false; }
         if (!disposed) tui.requestRender();
       }
 
@@ -450,7 +565,7 @@ export function startPriceWidget(
 
       async function fetchHealth() {
         try {
-          const res = await fetch(HEALTH_ENDPOINT);
+          const res = await fetch(HEALTH_ENDPOINT, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
           if (!res.ok) { plog(`health error: ${res.status}`); return; }
           const d = await res.json() as any;
           const panels = getPanels();
@@ -502,11 +617,16 @@ export function startPriceWidget(
         walletExposure = null;
         fetchWalletHistory();
       };
-      // Force billing refresh now (bypasses 60s rate limit) — called after agent_end
-      controller.triggerBillingRefresh = () => fetchBilling();
-
       // Billing: 1 req/min max (also triggered on agent_end)
       let billingLastHit = Date.now();
+
+      // Force billing refresh now (bypasses 60s rate limit) — called after agent_end.
+      // Reset billingLastHit so the next scheduled tick doesn't immediately re-fetch
+      // and double up against the rate limit.
+      controller.triggerBillingRefresh = () => {
+        billingLastHit = Date.now();
+        fetchBilling();
+      };
 
       // Initial fetch so the widget isn't empty on startup
       plog("health/metrics init");
@@ -520,6 +640,14 @@ export function startPriceWidget(
       fetchBilling();
       let lastHealthFetch = Date.now();
 
+      // Defensive wrapper — async fetchers already catch internally, but if
+      // an unexpected throw escapes, an unhandled rejection from a setInterval
+      // callback would crash the host pi process. Swallow + log instead.
+      const safe = (fn: () => Promise<void>, label: string) => {
+        try { fn().catch(err => plog(`${label} unhandled: ${err}`)); }
+        catch (err) { plog(`${label} sync throw: ${err}`); }
+      };
+
       const ticker = setInterval(() => {
         if (disposed) return;
         const now = Date.now();
@@ -527,13 +655,13 @@ export function startPriceWidget(
         // Health sentinel
         if (now - lastHealthFetch >= HEALTH_POLL_MS) {
           lastHealthFetch = now;
-          fetchHealth();
+          safe(fetchHealth, "fetchHealth");
         }
 
         // Billing: 1 req/min max (also triggered on agent_end)
         if (now - billingLastHit >= 60_000) {
           billingLastHit = now;
-          fetchBilling();
+          safe(fetchBilling, "fetchBilling");
         }
       }, TICK_MS);
 
@@ -710,7 +838,7 @@ export function startPriceWidget(
 
             const wave = charts?.cooldownWave ?? [];
             const cooldownP = getCooldownPeriod();
-            const waveChg = wave.length >= 2
+            const waveChg = wave.length >= 2 && wave[0] > 0
               ? ((wave[wave.length - 1] - wave[0]) / wave[0]) * 100 : 0;
             const waveDir = waveChg <= -2 ? "success" : waveChg >= 2 ? "error" : "text";
             const coolSparkW = isWide ? 11 : 7;
@@ -733,10 +861,13 @@ export function startPriceWidget(
           let diemData = "";
           if (panels.includes("diem") && metrics) {
             const gw = gaugeWidth(leftW, 0.05);
+            const delta = DIEM_TARGET_SUPPLY - metrics.diemSupply;
+            const deltaSign = delta >= 0 ? "+" : "\u2212";
+            const deltaColor = delta >= 0 ? "success" : "error";
             diemData =
               dim("DIEM Supply ") + theme.fg("text", fmtK(metrics.diemSupply)) + spc +
               dim("Mint Rate ") + theme.fg("text", `${metrics.mintRate.toFixed(0)} sVVV`) + spc +
-              dim("Remaining Mintable ") + theme.fg("text", fmtK(metrics.remainingMintable)) + spc +
+              dim("Target \u0394 ") + theme.fg(deltaColor, `${deltaSign}${fmtK(Math.abs(delta))}`) + spc +
               dim("Staked ") + gauge(metrics.diemStakeRatio, gw, theme) +
               theme.fg("text", ` ${(metrics.diemStakeRatio * 100).toFixed(1)}%`);
           }
