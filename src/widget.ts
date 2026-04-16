@@ -274,10 +274,22 @@ export function startPriceWidget(
       // so a misconfigured VENICE_ADMIN_API_KEY surfaces instead of silently
       // suppressing the billing overlay forever.
       let billingAuthNotified = false;
+      let billingKeyShapeNotified = false;
 
       async function fetchBilling() {
         const adminKey = process.env["VENICE_ADMIN_API_KEY"];
         if (!adminKey) { billing = null; return; }
+        // Reject keys containing CR/LF or other control chars — pasting one with a
+        // stray newline would otherwise inject extra HTTP headers via the
+        // Authorization value. Notify once so the user knows to re-set it.
+        if (/[\r\n\x00-\x1f\x7f]/.test(adminKey)) {
+          billing = null;
+          if (!billingKeyShapeNotified) {
+            billingKeyShapeNotified = true;
+            try { ctx.ui.notify("VENICE_ADMIN_API_KEY contains control characters — billing overlay disabled.", "error"); } catch { /* ignore */ }
+          }
+          return;
+        }
         try {
           const res = await fetch(`${VENICE_API_BASE}/billing/balance`, {
             headers: { Authorization: `Bearer ${adminKey}` },
