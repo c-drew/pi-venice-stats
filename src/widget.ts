@@ -640,6 +640,14 @@ export function startPriceWidget(
       fetchBilling();
       let lastHealthFetch = Date.now();
 
+      // Defensive wrapper — async fetchers already catch internally, but if
+      // an unexpected throw escapes, an unhandled rejection from a setInterval
+      // callback would crash the host pi process. Swallow + log instead.
+      const safe = (fn: () => Promise<void>, label: string) => {
+        try { fn().catch(err => plog(`${label} unhandled: ${err}`)); }
+        catch (err) { plog(`${label} sync throw: ${err}`); }
+      };
+
       const ticker = setInterval(() => {
         if (disposed) return;
         const now = Date.now();
@@ -647,13 +655,13 @@ export function startPriceWidget(
         // Health sentinel
         if (now - lastHealthFetch >= HEALTH_POLL_MS) {
           lastHealthFetch = now;
-          fetchHealth();
+          safe(fetchHealth, "fetchHealth");
         }
 
         // Billing: 1 req/min max (also triggered on agent_end)
         if (now - billingLastHit >= 60_000) {
           billingLastHit = now;
-          fetchBilling();
+          safe(fetchBilling, "fetchBilling");
         }
       }, TICK_MS);
 
