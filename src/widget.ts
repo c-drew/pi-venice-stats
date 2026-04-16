@@ -760,7 +760,7 @@ export function startPriceWidget(
 
             const wave = charts?.cooldownWave ?? [];
             const cooldownP = getCooldownPeriod();
-            const waveChg = wave.length >= 2
+            const waveChg = wave.length >= 2 && wave[0] > 0
               ? ((wave[wave.length - 1] - wave[0]) / wave[0]) * 100 : 0;
             const waveDir = waveChg <= -2 ? "success" : waveChg >= 2 ? "error" : "text";
             const coolSparkW = isWide ? 11 : 7;

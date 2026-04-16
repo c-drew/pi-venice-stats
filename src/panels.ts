@@ -565,7 +565,7 @@ export const PANEL_REGISTRY: Record<string, PanelDef> = {
         theme.fg("text", ` ${metrics.lockRatio.toFixed(1)}%`);
 
       const wave   = charts?.cooldownWave ?? [];
-      const waveChg = wave.length >= 2
+      const waveChg = wave.length >= 2 && wave[0] > 0
         ? ((wave[wave.length - 1] - wave[0]) / wave[0]) * 100
         : 0;
       const waveDir = waveChg <= -2 ? "success" : waveChg >= 2 ? "error" : "text";
