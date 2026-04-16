@@ -253,6 +253,9 @@ export const BILLING_INTERVAL_MAX = 600;
 /** Venice-controlled DIEM target supply. Update if Venice adjusts the target. */
 export const DIEM_TARGET_SUPPLY = 38_000;
 
+/** Strict EVM address shape — used to reject anything that could break URL/query semantics. */
+export const EVM_ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
+
 export interface PanelDef {
   id: string;
   label: string;
