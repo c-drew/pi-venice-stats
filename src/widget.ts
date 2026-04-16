@@ -68,6 +68,10 @@ const TICK_MS           = 500;
 // pipeline cycle (prices ~150s, diem/staking ~270s, everything else ~570s+).
 const HEALTH_POLL_MS   = 90_000;
 const HEALTH_ENDPOINT  = "https://venicestats.com/api/health";
+/** Per-request HTTP timeout. Network calls that hang longer than this are aborted
+ *  so a single dead socket can't pin a fetch in flight forever and starve later
+ *  polls (the in-flight guards block re-entry until the outstanding call resolves). */
+const FETCH_TIMEOUT_MS = 15_000;
 
 // ---------------------------------------------------------------------------
 // Multi-session lock
@@ -272,6 +276,7 @@ export function startPriceWidget(
         try {
           const res = await fetch(`${VENICE_API_BASE}/billing/balance`, {
             headers: { Authorization: `Bearer ${adminKey}` },
+            signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
           });
           if (!res.ok) { plog(`billing error: ${res.status}`); return; }
           const d = await res.json() as any;
@@ -292,7 +297,7 @@ export function startPriceWidget(
 
       async function fetchMetrics() {
         try {
-          const res = await fetch("https://venicestats.com/api/metrics");
+          const res = await fetch("https://venicestats.com/api/metrics", { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
           if (!res.ok) { sourceErrors.set("metrics", (sourceErrors.get("metrics") ?? 0) + 1); plog(`metrics error: ${res.status}`); return; }
           const d = await res.json() as any;
           if (typeof d.vvvPrice !== "number") { sourceErrors.set("metrics", (sourceErrors.get("metrics") ?? 0) + 1); return; }
@@ -338,7 +343,7 @@ export function startPriceWidget(
         if (!addr) { wallet = null; return; }
         if (addr !== lastWalletAddr) { wallet = null; lastWalletAddr = addr; }
         try {
-          const res = await fetch(`https://venicestats.com/api/venetians?address=${addr}`);
+          const res = await fetch(`https://venicestats.com/api/venetians?address=${addr}`, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
           if (!res.ok) { sourceErrors.set("wallet", (sourceErrors.get("wallet") ?? 0) + 1); plog(`wallet error: ${res.status}`); return; }
           sourceErrors.set("wallet", 0);
           const d = await res.json() as any;
@@ -359,7 +364,7 @@ export function startPriceWidget(
       async function fetchSocial() {
         if (!getPanels().includes("social")) { social = null; return; }
         try {
-          const res = await fetch("https://venicestats.com/api/social");
+          const res = await fetch("https://venicestats.com/api/social", { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
           if (!res.ok) { sourceErrors.set("social", (sourceErrors.get("social") ?? 0) + 1); plog(`social error: ${res.status}`); return; }
           sourceErrors.set("social", 0);
           const d = await res.json() as any;
@@ -377,7 +382,7 @@ export function startPriceWidget(
       async function fetchMarkets() {
         if (!getPanels().includes("markets")) { markets = null; return; }
         try {
-          const res = await fetch("https://venicestats.com/api/markets?token=VVV&period=24h");
+          const res = await fetch("https://venicestats.com/api/markets?token=VVV&period=24h", { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
           if (!res.ok) { sourceErrors.set("markets", (sourceErrors.get("markets") ?? 0) + 1); plog(`markets error: ${res.status}`); return; }
           sourceErrors.set("markets", 0);
           const d = await res.json() as any;
@@ -435,7 +440,7 @@ export function startPriceWidget(
         if (!getPanels().some(id => ["staking", "diem"].includes(id))) return;
         const cp = getCooldownPeriod();
         try {
-          const waveRes = await fetch(`https://venicestats.com/api/charts?period=${cp}&metric=cooldownWave`);
+          const waveRes = await fetch(`https://venicestats.com/api/charts?period=${cp}&metric=cooldownWave`, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
           if (!waveRes.ok) {
             plog(`cooldown error: ${waveRes.status}`);
             return;
@@ -467,7 +472,7 @@ export function startPriceWidget(
         const addr = getWallet();
         if (!addr) return null;
         const url = `https://venicestats.com/api/wallet-history?address=${addr}&granularity=${granularity}`;
-        const res = await fetch(url);
+        const res = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
         if (!res.ok) return null;
         const d = await res.json() as any;
         const rawPts: any[] = Array.isArray(d.points) ? d.points : [];
@@ -500,7 +505,7 @@ export function startPriceWidget(
 
       async function fetchHealth() {
         try {
-          const res = await fetch(HEALTH_ENDPOINT);
+          const res = await fetch(HEALTH_ENDPOINT, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
           if (!res.ok) { plog(`health error: ${res.status}`); return; }
           const d = await res.json() as any;
           const panels = getPanels();
