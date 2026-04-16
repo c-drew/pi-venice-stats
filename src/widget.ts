@@ -552,11 +552,16 @@ export function startPriceWidget(
         walletExposure = null;
         fetchWalletHistory();
       };
-      // Force billing refresh now (bypasses 60s rate limit) — called after agent_end
-      controller.triggerBillingRefresh = () => fetchBilling();
-
       // Billing: 1 req/min max (also triggered on agent_end)
       let billingLastHit = Date.now();
+
+      // Force billing refresh now (bypasses 60s rate limit) — called after agent_end.
+      // Reset billingLastHit so the next scheduled tick doesn't immediately re-fetch
+      // and double up against the rate limit.
+      controller.triggerBillingRefresh = () => {
+        billingLastHit = Date.now();
+        fetchBilling();
+      };
 
       // Initial fetch so the widget isn't empty on startup
       plog("health/metrics init");
