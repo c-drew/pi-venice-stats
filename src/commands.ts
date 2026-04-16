@@ -1,5 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
-import { detectTimezone } from "./panels.ts";
+import { detectTimezone, EVM_ADDRESS_RE } from "./panels.ts";
 import type { WidgetController } from "./widget.ts";
 import { persistConfig } from "./state.ts";
 import type { VeniceStatsConfig } from "./state.ts";
@@ -37,7 +37,7 @@ export function registerVeniceStatsCommands(
         notify(ctx, "Wallet cleared.", "info");
         return;
       }
-      if (!/^0x[0-9a-fA-F]{40}$/.test(addr)) {
+      if (!EVM_ADDRESS_RE.test(addr)) {
         notify(ctx, "Invalid address \u2014 must be 0x followed by 40 hex chars.", "error");
         return;
       }

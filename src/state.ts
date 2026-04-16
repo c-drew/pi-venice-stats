@@ -1,4 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
+import { EVM_ADDRESS_RE } from "./panels.ts";
 
 const STATE_ENTRY_TYPE = "venice-stats-config";
 
@@ -36,7 +37,9 @@ export function loadConfig(ctx: ExtensionContext): VeniceStatsConfig {
 
   const config: VeniceStatsConfig = {};
 
-  if (typeof latest.walletAddress === "string") config.walletAddress = latest.walletAddress;
+  if (typeof latest.walletAddress === "string" && EVM_ADDRESS_RE.test(latest.walletAddress)) {
+    config.walletAddress = latest.walletAddress;
+  }
   if (Array.isArray(latest.widgetPanels))        config.widgetPanels = latest.widgetPanels.filter((p: any) => typeof p === "string");
   if (typeof latest.widgetTimezone === "string") config.widgetTimezone = latest.widgetTimezone;
   if (latest.widgetTimeFormat === "12h" || latest.widgetTimeFormat === "24h") config.widgetTimeFormat = latest.widgetTimeFormat;
