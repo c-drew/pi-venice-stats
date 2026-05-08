@@ -337,6 +337,7 @@ export function startPriceWidget(
             diemEpochAllocation: typeof d.diemEpochAllocation === "number" ? d.diemEpochAllocation : 0,
           };
           plog(`billing ok — DIEM=${billing.diemBalance}/${billing.diemEpochAllocation} USD=${billing.usdBalance}`);
+          sourceReady.set("billing", true);
           logPanels();
         } catch (err) { plog(`billing error: ${err}`); }
         if (!disposed) tui.requestRender();
@@ -350,7 +351,7 @@ export function startPriceWidget(
           if (!res.ok) { sourceErrors.set("metrics", (sourceErrors.get("metrics") ?? 0) + 1); plog(`metrics error: ${res.status}`); return; }
           const d = await res.json() as any;
           if (typeof d.vvvPrice !== "number") { sourceErrors.set("metrics", (sourceErrors.get("metrics") ?? 0) + 1); return; }
-          sourceErrors.set("metrics", 0);
+          sourceErrors.set("metrics", 0); sourceReady.set("metrics", true);
           if (metrics && d.vvvPrice  !== metrics.vvvPrice)  setFlash("vvv",  d.vvvPrice  > metrics.vvvPrice  ? "up" : "down");
           if (metrics && d.diemPrice !== metrics.diemPrice) setFlash("diem", d.diemPrice > metrics.diemPrice ? "up" : "down");
           metrics = {
@@ -401,7 +402,7 @@ export function startPriceWidget(
         try {
           const res = await fetch(`https://venicestats.com/api/venetians?address=${addr}`, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
           if (!res.ok) { sourceErrors.set("wallet", (sourceErrors.get("wallet") ?? 0) + 1); plog(`wallet error: ${res.status}`); return; }
-          sourceErrors.set("wallet", 0);
+          sourceErrors.set("wallet", 0); sourceReady.set("wallet", true);
           const d = await res.json() as any;
           wallet = {
             label: d.ensName ?? fmtAddr(d.address ?? addr),
@@ -423,7 +424,7 @@ export function startPriceWidget(
         try {
           const res = await fetch("https://venicestats.com/api/social", { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
           if (!res.ok) { sourceErrors.set("social", (sourceErrors.get("social") ?? 0) + 1); plog(`social error: ${res.status}`); return; }
-          sourceErrors.set("social", 0);
+          sourceErrors.set("social", 0); sourceReady.set("social", true);
           const d = await res.json() as any;
           social = {
             erikFollowers: d.erikFollowers ?? 0, sentimentUpPct: d.sentimentUpPct ?? 0,
@@ -441,7 +442,7 @@ export function startPriceWidget(
         try {
           const res = await fetch("https://venicestats.com/api/markets?token=VVV&period=24h", { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
           if (!res.ok) { sourceErrors.set("markets", (sourceErrors.get("markets") ?? 0) + 1); plog(`markets error: ${res.status}`); return; }
-          sourceErrors.set("markets", 0);
+          sourceErrors.set("markets", 0); sourceReady.set("markets", true);
           const d = await res.json() as any;
           const k = d.kpis;
           const pctChg = (cur: number | undefined, prev: number | undefined): number | null => {
@@ -477,7 +478,7 @@ export function startPriceWidget(
             plog(`charts error: ${vvvRes.status} / ${diemRes.status}`);
             return;
           }
-          sourceErrors.set("charts", 0);
+          sourceErrors.set("charts", 0); sourceReady.set("charts", true);
           const vvvD  = await vvvRes.json()  as any;
           const diemD = await diemRes.json() as any;
           charts = {
@@ -503,6 +504,7 @@ export function startPriceWidget(
             return;
           }
           const waveD = await waveRes.json() as any;
+          sourceReady.set("cooldown", true);
           const newWave = Array.isArray(waveD.data) ? waveD.data.map((p: any) => p.v as number) : [];
           const prevWave = charts?.cooldownWave ?? [];
           const waveChanged =
@@ -568,6 +570,7 @@ export function startPriceWidget(
           const res = await fetch(HEALTH_ENDPOINT, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
           if (!res.ok) { plog(`health error: ${res.status}`); return; }
           const d = await res.json() as any;
+          sourceReady.set("health", true);
           const panels = getPanels();
 
           for (const p of d.pipelines ?? []) {
@@ -628,6 +631,22 @@ export function startPriceWidget(
         fetchBilling();
       };
 
+      // Track which sources have produced data at least once.
+      // Used to retry initial fetches faster when the network isn't ready yet
+      // (e.g., ProtonVPN still connecting at login autostart).
+      const sourceReady = new Map<string, boolean>([
+        ["health", false],
+        ["metrics", false],
+        ["charts", false],
+        ["cooldown", false],
+        ["wallet", false],
+        ["social", false],
+        ["markets", false],
+        ["billing", false],
+      ]);
+      const INITIAL_RETRY_MS = 15_000;  // retry failed sources every 15s during startup
+      let initialRetryUntil = Date.now() + 300_000;  // give up aggressive retry after 5min
+
       // Initial fetch so the widget isn't empty on startup
       plog("health/metrics init");
       fetchHealth();
@@ -648,9 +667,26 @@ export function startPriceWidget(
         catch (err) { plog(`${label} sync throw: ${err}`); }
       };
 
+      let lastInitialRetry = Date.now();
+
       const ticker = setInterval(() => {
         if (disposed) return;
         const now = Date.now();
+
+        // Startup retry: re-attempt sources that haven't produced data yet,
+        // every 15s for up to 5 minutes after launch. After that, the
+        // health sentinel handles ongoing polling.
+        if (now < initialRetryUntil && now - lastInitialRetry >= INITIAL_RETRY_MS) {
+          lastInitialRetry = now;
+          const panels = getPanels();
+          if (!sourceReady.get("health"))  safe(fetchHealth, "fetchHealth-retry");
+          if (!sourceReady.get("metrics"))  safe(fetchMetrics, "fetchMetrics-retry");
+          if (!sourceReady.get("charts"))   safe(fetchTokenCharts, "fetchCharts-retry");
+          if (!sourceReady.get("cooldown")) safe(fetchCooldownChart, "fetchCooldown-retry");
+          if (panels.includes("wallet")  && !sourceReady.get("wallet"))  safe(fetchWallet, "fetchWallet-retry");
+          if (panels.includes("social")  && !sourceReady.get("social"))  safe(fetchSocial, "fetchSocial-retry");
+          if (panels.includes("markets") && !sourceReady.get("markets")) safe(fetchMarkets, "fetchMarkets-retry");
+        }
 
         // Health sentinel
         if (now - lastHealthFetch >= HEALTH_POLL_MS) {
